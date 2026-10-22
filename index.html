@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Downloader — XyncTeam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #f3f5f9;
+  --card: #ffffff;
+  --text: #1b2230;
+  --muted: #667085;
+  --line: #e4e8f0;
+  --accent: #3b6df6;
+  --accent-soft: #eaf0ff;
+  --green: #16a34a;
+  --green-soft: #e9f9ef;
+  --red: #dc2626;
+  --red-soft: #fdecec;
+  --shadow: 0 10px 30px rgba(23, 35, 66, .08);
+}
+[data-theme="dark"] {
+  --bg: #101319;
+  --card: #181c25;
+  --text: #e9edf5;
+  --muted: #93a0b4;
+  --line: #262c38;
+  --accent: #5b8aff;
+  --accent-soft: #1d2740;
+  --green: #34c76f;
+  --green-soft: #14291c;
+  --red: #f0554d;
+  --red-soft: #2e1616;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  transition: background .25s, color .25s;
+}
+.wrap {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 28px 18px 20px;
+}
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 34px;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 16px;
+}
+.brand .dot {
+  width: 30px; height: 30px; border-radius: 9px;
+  background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.theme-btn {
+  width: 40px; height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 17px;
+  cursor: pointer;
+  transition: border-color .2s, transform .15s;
+}
+.theme-btn:hover { border-color: var(--accent); }
+.theme-btn:active { transform: scale(.94); }
+
+.hero { text-align: center; margin-bottom: 28px; }
+.hero h1 {
+  font-size: clamp(25px, 6vw, 34px);
+  font-weight: 700;
+  letter-spacing: -.02em;
+  margin-bottom: 10px;
+}
+.hero p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+  margin-bottom: 16px;
+}
+.step { display: none; }
+.step.show { display: block; animation: rise .35s ease; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.field {
+  width: 100%;
+  background: var(--bg);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  padding: 14px 16px;
+  outline: none;
+  transition: border-color .2s, box-shadow .2s;
+}
+.field::placeholder { color: var(--muted); }
+.field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.btn {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 14px 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  transition: filter .18s, transform .12s, background .18s, border-color .18s;
+  text-decoration: none;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #fff; margin-top: 14px; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-green { background: var(--green); color: #fff; margin-top: 14px; }
+.btn-green:hover { filter: brightness(1.08); }
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1.5px solid var(--line);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+.video {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+.video img {
+  width: 148px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.video .info { min-width: 0; }
+.video .vtitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.video .vauthor { color: var(--muted); font-size: 13px; }
+
+.label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 16px 0 9px;
+}
+.formats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+}
+.fmt {
+  border: 1.5px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 11px;
+  padding: 11px 6px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .16s;
+}
+.fmt:hover { border-color: var(--accent); }
+.fmt.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+select.field { appearance: auto; }
+
+.progress-wrap { margin-top: 6px; }
+.progress {
+  height: 10px;
+  border-radius: 99px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 99px;
+  background: var(--accent);
+  transition: width .5s ease;
+}
+.progress.indet > i {
+  width: 40%;
+  animation: slide 1.2s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { margin-left: -42%; }
+  100% { margin-left: 102%; }
+}
+.pstatus {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 11px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 18px;
+}
+.ok-icon {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--green-soft);
+  color: var(--green);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.result-head .rh-title { font-size: 17px; font-weight: 600; }
+.result-head .rh-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pill.green { background: var(--green-soft); color: var(--green); }
+
+.alert {
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.alert.error {
+  background: var(--red-soft);
+  color: var(--red);
+  margin-bottom: 4px;
+}
+
+footer {
+  text-align: center;
+  padding: 26px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+footer b { color: var(--text); font-weight: 600; }
+
+@media (max-width: 520px) {
+  .wrap { padding: 20px 14px 12px; }
+  .top { margin-bottom: 24px; }
+  .card { padding: 17px; border-radius: 14px; }
+  .video { flex-direction: column; }
+  .video img { width: 100%; }
+  .formats { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><div class="dot">X</div> XyncTeam</div>
+    <button class="theme-btn" id="themeBtn" aria-label="Ganti tema">🌙</button>
+  </div>
+
+  <div class="hero">
+    <h1>YouTube Downloader</h1>
+    <p>Unduh video atau musik dari YouTube jadi MP3, MP4, M4A, dan OPUS. Gratis, cepat, tanpa login.</p>
+  </div>
+
+  <section class="card">
+    <div class="step show" id="step1">
+      <input class="field" id="url" type="text" placeholder="Tempel link YouTube di sini..." autocomplete="off" spellcheck="false">
+      <button class="btn btn-primary" id="btnGet">Download</button>
+    </div>
+
+    <div class="step" id="step2">
+      <div class="video">
+        <img id="thumb" alt="thumbnail">
+        <div class="info">
+          <div class="vtitle" id="vtitle"></div>
+          <div class="vauthor" id="vauthor"></div>
+        </div>
+      </div>
+
+      <label class="label">Format</label>
+      <div class="formats" id="formats">
+        <button class="fmt active" data-fmt="mp3">MP3</button>
+        <button class="fmt" data-fmt="mp4">MP4</button>
+        <button class="fmt" data-fmt="m4a">M4A</button>
+        <button class="fmt" data-fmt="opus">OPUS</button>
+      </div>
+
+      <label class="label">Quality</label>
+      <select class="field" id="quality"></select>
+
+      <button class="btn btn-primary" id="btnConvert">Konversi &amp; Unduh</button>
+    </div>
+
+    <div class="step" id="step3">
+      <div class="progress-wrap">
+        <div class="progress indet" id="bar"><i></i></div>
+        <div class="pstatus">
+          <span id="pmsg">Menyiapkan...</span>
+          <span id="ptime">00:00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step" id="step4">
+      <div class="result-head">
+        <div class="ok-icon">✓</div>
+        <div>
+          <div class="rh-title">File siap diunduh</div>
+          <div class="rh-sub" id="rsub"></div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div class="pill" id="pillFmt"></div>
+        <div class="pill green" id="pillSize">Siap unduh</div>
+      </div>
+      <a class="btn btn-green" id="btnFile" href="#" target="_blank" rel="noopener">Download File</a>
+      <button class="btn btn-ghost" id="btnCopy" style="margin-top:10px">Salin Link</button>
+      <button class="btn btn-ghost" id="btnAgain" style="margin-top:10px">Unduh Lagi</button>
+    </div>
+
+    <div class="step" id="stepErr">
+      <div class="alert error" id="errmsg"></div>
+      <button class="btn btn-ghost" id="btnRetry" style="margin-top:12px">Coba Lagi</button>
+    </div>
+  </section>
+
+  <footer>© <b>XyncTeam</b> 2026</footer>
+</div>
+
+<script>
+const API = location.protocol === 'file:' ? 'http://localhost:3000' : ''
+const QUAL = {
+  mp3: [['320', '320 kbps'], ['256', '256 kbps'], ['128', '128 kbps'], ['96', '96 kbps'], ['64', '64 kbps']],
+  mp4: [['2160', '2160p (4K)'], ['1440', '1440p (2K)'], ['1080', '1080p (Full HD)'], ['720', '720p (HD)'], ['480', '480p'], ['360', '360p'], ['240', '240p'], ['144', '144p']],
+  m4a: [['320', '320 kbps']],
+  opus: [['320', '320 kbps']]
+}
+const STATUS_MSG = ['Menghubungkan ke server...', 'Menyiapkan sesi...', 'Memproses video...', 'Mengonversi...', 'Menyelesaikan...']
+
+const $ = id => document.getElementById(id)
+let fmt = 'mp3'
+let meta = null
+let tick = null
+
+const saved = localStorage.getItem('xync-theme')
+const preferDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+setTheme(saved || (preferDark ? 'dark' : 'light'))
+
+function setTheme(t) {
+  document.documentElement.dataset.theme = t
+  localStorage.setItem('xync-theme', t)
+  $('themeBtn').textContent = t === 'dark' ? '☀️' : '🌙'
+}
+$('themeBtn').addEventListener('click', () => {
+  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark')
+})
+
+function show(id) {
+  for (const s of ['step1', 'step2', 'step3', 'step4', 'stepErr']) $(s).classList.remove('show')
+  $(id).classList.add('show')
+}
+
+function fillQual() {
+  $('quality').innerHTML = QUAL[fmt].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')
+}
+fillQual()
+
+$('formats').addEventListener('click', e => {
+  const b = e.target.closest('.fmt')
+  if (!b) return
+  document.querySelectorAll('.fmt').forEach(x => x.classList.remove('active'))
+  b.classList.add('active')
+  fmt = b.dataset.fmt
+  fillQual()
+})
+
+function startTick() {
+  const t0 = Date.now()
+  clearInterval(tick)
+  $('pmsg').textContent = STATUS_MSG[0]
+  $('bar').classList.add('indet')
+  tick = setInterval(() => {
+    const s = Math.floor((Date.now() - t0) / 1000)
+    $('ptime').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+    if (s > 0 && s % 7 === 0) {
+      const i = Math.min(STATUS_MSG.length - 1, Math.floor(s / 7))
+      $('pmsg').textContent = STATUS_MSG[i]
+    }
+  }, 1000)
+}
+function stopTick() { clearInterval(tick) }
+
+function fail(msg) {
+  stopTick()
+  $('errmsg').textContent = msg
+  show('stepErr')
+}
+
+$('btnGet').addEventListener('click', async () => {
+  const url = $('url').value.trim()
+  if (!url) {
+    $('url').focus()
+    $('url').style.borderColor = 'var(--red)'
+    setTimeout(() => $('url').style.borderColor = '', 900)
+    return
+  }
+  $('btnGet').disabled = true
+  $('btnGet').textContent = 'Memuat...'
+  try {
+    const res = await fetch(`${API}/api/info?url=${encodeURIComponent(url)}`)
+    const data = await res.json()
+    if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'video tidak ditemukan')
+    meta = data
+    $('thumb').src = data.thumbnail || `https://i.ytimg.com/vi/${data.videoId}/hqdefault.jpg`
+    $('vtitle').textContent = data.title || data.videoId
+    $('vauthor').textContent = data.author || ''
+    show('step2')
+  } catch (err) {
+    fail(err.message || 'gagal memuat video')
+  } finally {
+    $('btnGet').disabled = false
+    $('btnGet').textContent = 'Download'
+  }
+})
+
+$('btnConvert').addEventListener('click', async () => {
+  const url = $('url').value.trim()
+  const quality = $('quality').value
+  show('step3')
+  startTick()
+  try {
+    const res = await fetch(`${API}/api/download?url=${encodeURIComponent(url)}&format=${fmt}&quality=${quality}`)
+    const data = await res.json()
+    if (!res.ok || data.status !== 'ok' || !data.url) throw new Error(data.message || 'konversi gagal')
+    stopTick()
+    $('rsub').textContent = data.title || data.videoId
+    $('pillFmt').textContent = `${(data.format || fmt).toUpperCase()} • ${(QUAL[data.format || fmt].find(q => q[0] === data.quality) || ['', quality])[1]}`
+    $('btnFile').href = data.url
+    show('step4')
+  } catch (err) {
+    fail(err.message || 'konversi gagal')
+  }
+})
+
+$('btnCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText($('btnFile').href).then(() => {
+    $('btnCopy').textContent = 'Link tersalin ✓'
+    setTimeout(() => $('btnCopy').textContent = 'Salin Link', 1600)
+  })
+})
+$('btnAgain').addEventListener('click', () => {
+  $('url').value = ''
+  show('step1')
+  $('url').focus()
+})
+$('btnRetry').addEventListener('click', () => {
+  show(meta ? 'step2' : 'step1')
+})
+$('url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('btnGet').click()
+})
+</script>
+</body>
+</html>
