@@ -463,7 +463,7 @@ $('btnGet').addEventListener('click', async () => {
   try {
     const res = await fetch(`${API}/api/info?url=${encodeURIComponent(url)}`)
     const data = await res.json().catch(() => null)
-    if (!data) throw new Error('server tidak merespons, coba lagi')
+    if (!data) throw new Error(`server tidak merespons (HTTP ${res.status}), coba lagi`)
     if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'video tidak ditemukan')
     meta = data
     $('thumb').src = data.thumbnail || `https://i.ytimg.com/vi/${data.videoId}/hqdefault.jpg`
@@ -486,7 +486,7 @@ $('btnConvert').addEventListener('click', async () => {
   try {
     const res = await fetch(`${API}/api/download?url=${encodeURIComponent(url)}&format=${fmt}&quality=${quality}`)
     const data = await res.json().catch(() => null)
-    if (!data) throw new Error('server tidak merespons, coba lagi')
+    if (!data) throw new Error(`server tidak merespons (HTTP ${res.status}), coba lagi`)
     if (!res.ok || data.status !== 'ok' || !data.url) throw new Error(data.message || 'konversi gagal')
     stopTick()
     $('rsub').textContent = data.title || data.videoId

@@ -1,7 +1,6 @@
 {
-  "routes": [
-    { "src": "/", "dest": "/index.html" },
-    { "handle": "filesystem" }
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" }
   ],
   "functions": {
     "api/solve.js": { "maxDuration": 60 },
