@@ -1,9 +1,9 @@
 {
   "name": "xync-ytdl",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "scripts": {
-    "start": "node startHtml.js",
+    "start": "node src/server.js",
     "menu": "node index.js"
   }
 }
