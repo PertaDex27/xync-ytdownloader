@@ -376,8 +376,7 @@ footer b { color: var(--text); font-weight: 600; }
         <div class="pill" id="pillFmt"></div>
         <div class="pill green" id="pillSize">Siap unduh</div>
       </div>
-      <a class="btn btn-green" id="btnFile" href="#" target="_blank" rel="noopener">Download File</a>
-      <button class="btn btn-ghost" id="btnCopy" style="margin-top:10px">Salin Link</button>
+      <a class="btn btn-green" id="btnFile" href="#">Download File</a>
       <button class="btn btn-ghost" id="btnAgain" style="margin-top:10px">Unduh Lagi</button>
     </div>
 
@@ -420,6 +419,7 @@ let fmt = 'mp3'
 let meta = null
 let tick = null
 let prog = 0
+let dlName = 'download'
 
 const saved = localStorage.getItem('xync-theme')
 const preferDark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -521,17 +521,31 @@ $('btnConvert').addEventListener('click', async () => {
     $('rsub').textContent = data.title || data.videoId
     $('pillFmt').textContent = `${(data.format || fmt).toUpperCase()} • ${(QUAL[data.format || fmt].find(q => q[0] === data.quality) || ['', quality])[1]}`
     $('btnFile').href = data.url
+    dlName = `${(data.title || 'download').replace(/[\\/:*?"<>|]/g, '-')}.${data.format || fmt}`
     show('step4')
   } catch (err) {
     fail(err.message || 'konversi gagal')
   }
 })
 
-$('btnCopy').addEventListener('click', () => {
-  navigator.clipboard.writeText($('btnFile').href).then(() => {
-    $('btnCopy').textContent = 'Link tersalin ✓'
-    setTimeout(() => $('btnCopy').textContent = 'Salin Link', 1600)
-  })
+$('btnFile').addEventListener('click', async e => {
+  e.preventDefault()
+  try {
+    const blob = await (await fetch($('btnFile').href)).blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = dlName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+  } catch {
+    const a = document.createElement('a')
+    a.href = $('btnFile').href
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
 })
 $('btnAgain').addEventListener('click', () => {
   $('url').value = ''
