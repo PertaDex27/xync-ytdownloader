@@ -230,14 +230,6 @@ select.field { appearance: auto; }
   background: var(--accent);
   transition: width .5s ease;
 }
-.progress.indet > i {
-  width: 40%;
-  animation: slide 1.2s ease-in-out infinite;
-}
-@keyframes slide {
-  0% { margin-left: -42%; }
-  100% { margin-left: 102%; }
-}
 .pstatus {
   display: flex;
   justify-content: space-between;
@@ -274,6 +266,24 @@ select.field { appearance: auto; }
 }
 .pill.green { background: var(--green-soft); color: var(--green); }
 
+.api-desc { color: var(--muted); font-size: 14px; line-height: 1.65; margin: 10px 0 14px; }
+.api-desc b { color: var(--text); }
+.api-name { font-size: 13px; font-weight: 600; margin: 14px 0 8px; }
+.code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+.res { color: var(--muted); }
+
 .alert {
   border-radius: 12px;
   padding: 14px 16px;
@@ -307,7 +317,7 @@ footer b { color: var(--text); font-weight: 600; }
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="brand"><div class="dot">X</div> XyncTeam</div>
+    <div class="brand"><div class="dot">X</div></div>
     <button class="theme-btn" id="themeBtn" aria-label="Ganti tema">🌙</button>
   </div>
 
@@ -347,10 +357,10 @@ footer b { color: var(--text); font-weight: 600; }
 
     <div class="step" id="step3">
       <div class="progress-wrap">
-        <div class="progress indet" id="bar"><i></i></div>
+        <div class="progress" id="bar"><i id="barfill"></i></div>
         <div class="pstatus">
-          <span id="pmsg">Menyiapkan...</span>
-          <span id="ptime">00:00</span>
+          <span id="pmsg">Starting...</span>
+          <span id="ppercent">0%</span>
         </div>
       </div>
     </div>
@@ -378,6 +388,21 @@ footer b { color: var(--text); font-weight: 600; }
     </div>
   </section>
 
+  <section class="card">
+    <div class="label" style="margin-top:0">Penggunaan API</div>
+    <p class="api-desc">Mau nempel downloader ini ke web/apk lu? Tenang, ada API-nya kok. Tinggal GET aja, ntar dapet JSON:</p>
+
+    <div class="api-name">1. Ambil info video (judul, thumbnail, dll)</div>
+    <pre class="code">GET /api/info?url=&lt;link youtube&gt;</pre>
+    <pre class="code res">{ "status": "ok", "videoId": "dQw4w9WgXcQ", "title": "...", "author": "...", "thumbnail": "..." }</pre>
+
+    <div class="api-name">2. Ambil link downloadnya</div>
+    <pre class="code">GET /api/download?url=&lt;link youtube&gt;&amp;format=mp3&amp;quality=320</pre>
+    <pre class="code res">{ "status": "ok", "url": "https://...", "format": "mp3", "quality": "320" }</pre>
+
+    <p class="api-desc">Format yg ada: <b>mp3</b> (320–64 kbps), <b>mp4</b> (2160p–144p), <b>m4a</b> &amp; <b>opus</b> (320 kbps). Gak perlu login, gak perlu apikey, responnya JSON semua. Gampang kan 😎</p>
+  </section>
+
   <footer>© <b>XyncTeam</b> 2026</footer>
 </div>
 
@@ -389,12 +414,13 @@ const QUAL = {
   m4a: [['320', '320 kbps']],
   opus: [['320', '320 kbps']]
 }
-const STATUS_MSG = ['Menghubungkan ke server...', 'Menyiapkan sesi...', 'Memproses video...', 'Mengonversi...', 'Menyelesaikan...']
+const STATUS_MSG = ['Connecting to server...', 'Preparing session...', 'Processing video...', 'Converting...', 'Finalizing...']
 
 const $ = id => document.getElementById(id)
 let fmt = 'mp3'
 let meta = null
 let tick = null
+let prog = 0
 
 const saved = localStorage.getItem('xync-theme')
 const preferDark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -429,20 +455,24 @@ $('formats').addEventListener('click', e => {
 })
 
 function startTick() {
-  const t0 = Date.now()
   clearInterval(tick)
+  prog = 0
+  $('barfill').style.width = '0%'
+  $('ppercent').textContent = '0%'
   $('pmsg').textContent = STATUS_MSG[0]
-  $('bar').classList.add('indet')
   tick = setInterval(() => {
-    const s = Math.floor((Date.now() - t0) / 1000)
-    $('ptime').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-    if (s > 0 && s % 7 === 0) {
-      const i = Math.min(STATUS_MSG.length - 1, Math.floor(s / 7))
-      $('pmsg').textContent = STATUS_MSG[i]
-    }
-  }, 1000)
+    prog += (93 - prog) * 0.025
+    const p = Math.min(99, Math.floor(prog))
+    $('barfill').style.width = p + '%'
+    $('ppercent').textContent = p + '%'
+    $('pmsg').textContent = STATUS_MSG[Math.min(STATUS_MSG.length - 1, Math.floor(p / 20))]
+  }, 220)
 }
-function stopTick() { clearInterval(tick) }
+function stopTick() {
+  clearInterval(tick)
+  $('barfill').style.width = '100%'
+  $('ppercent').textContent = '100%'
+}
 
 function fail(msg) {
   stopTick()
