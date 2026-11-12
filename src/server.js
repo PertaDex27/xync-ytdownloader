@@ -42,6 +42,25 @@ async function handle(req, res) {
     if (url.pathname === '/api/download') {
       const format = normalizeFormat(q.get('format'))
       const quality = normalizeQuality(format, q.get('quality'))
+
+      if (q.get('stream')) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+        })
+        const push = data => res.write(`data: ${JSON.stringify(data)}\n\n`)
+        try {
+          const meta = await fetchMeta(videoId)
+          const fileUrl = await convert(videoId, format, quality, (msg, frac) => push({ type: 'status', msg, frac }))
+          push({ type: 'done', status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
+        } catch (err) {
+          push({ type: 'error', message: err.message || 'server error' })
+        }
+        return res.end()
+      }
+
       const meta = await fetchMeta(videoId)
       const fileUrl = await convert(videoId, format, quality)
       return send(res, 200, { status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
