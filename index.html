@@ -468,12 +468,9 @@ select.field { appearance: auto; cursor: pointer; }
 }
 .res { color: var(--muted); }
 
-.try { margin-top: 6px; }
-.try-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 12px; }
-.try-tabs .fmt { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
-.try-opts { display: none; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 10px; }
-.req-box { position: relative; margin-top: 12px; }
-.req-box .code { padding-right: 76px; margin: 0; }
+.code-box { position: relative; }
+.code-box .code { padding-right: 76px; }
+.py-code { max-height: 360px; overflow: auto; white-space: pre; word-break: normal; }
 .copy-btn {
   position: absolute; top: 8px; right: 8px;
   border: 1px solid var(--line);
@@ -488,16 +485,6 @@ select.field { appearance: auto; cursor: pointer; }
   transition: border-color .2s, color .2s;
 }
 .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
-.try-meta {
-  display: none;
-  align-items: center; gap: 8px;
-  margin: 14px 0 8px;
-  font-size: 12px; font-weight: 600;
-  color: var(--muted);
-}
-.try-meta .pill { padding: 3px 9px; }
-.try-meta .pill.red { background: var(--red-soft); color: var(--red); }
-.try-res { display: none; max-height: 320px; overflow: auto; white-space: pre; word-break: normal; }
 
 .alert {
   display: flex; gap: 12px; align-items: flex-start;
@@ -642,29 +629,51 @@ footer b { color: var(--text); font-weight: 600; }
 
     <p class="api-desc">Tambahin <b>&amp;stream=1</b> kalau mau dapet progress realtime (Server-Sent Events). Format yg ada: <b>mp3</b> (320–64 kbps), <b>mp4</b> (2160p–144p), <b>m4a</b> &amp; <b>opus</b> (320 kbps). Gak perlu login, gak perlu apikey.</p>
 
-    <div class="api-name">3. Coba langsung di sini</div>
-    <div class="try">
-      <div class="try-tabs" id="tryTabs">
-        <button class="fmt active" data-ep="info">/api/info</button>
-        <button class="fmt" data-ep="download">/api/download</button>
-      </div>
-      <input class="field" id="tryUrl" type="text" placeholder="Tempel link YouTube..." autocomplete="off" spellcheck="false">
-      <div class="try-opts" id="tryOpts">
-        <select class="field" id="tryFmt">
-          <option value="mp3">MP3</option>
-          <option value="mp4">MP4</option>
-          <option value="m4a">M4A</option>
-          <option value="opus">OPUS</option>
-        </select>
-        <select class="field" id="tryQual"></select>
-      </div>
-      <div class="req-box">
-        <pre class="code" id="tryReq"></pre>
-        <button class="copy-btn" id="btnCopy">Salin</button>
-      </div>
-      <button class="btn btn-primary" id="btnTry">Kirim Request</button>
-      <div class="try-meta" id="tryMeta"><span class="pill" id="tryStatus"></span><span id="tryTime"></span></div>
-      <pre class="code try-res" id="tryRes"></pre>
+    <div class="api-name">3. Pakai lewat terminal (Python)</div>
+    <p class="api-desc" style="margin-top:0">Gak mau buka web? Simpen kode di bawah jadi <b>ytdl.py</b>, terus jalanin <b>python ytdl.py</b>. Bisa di Termux, WSL, CMD, Linux, Mac. Cuma pakai library bawaan Python, gak perlu <b>pip install</b>. Khusus Termux, install Python dulu pakai <b>pkg install python</b>.</p>
+    <div class="code-box">
+      <pre class="code py-code" id="pyCode">import json
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+
+API = "__API__"
+
+url = input("Link YouTube : ").strip()
+fmt = input("Format (mp3/mp4/m4a/opus) [mp3] : ").strip().lower() or "mp3"
+quality = input("Quality (kosongin = default) : ").strip()
+
+print("\nLagi diproses, tunggu bentar...")
+query = urllib.parse.urlencode({"url": url, "format": fmt, "quality": quality})
+try:
+    with urllib.request.urlopen(f"{API}/api/download?{query}", timeout=300) as res:
+        data = json.load(res)
+except urllib.error.HTTPError as err:
+    data = json.load(err)
+
+if data.get("status") != "ok":
+    raise SystemExit(f"Gagal: {data.get('message')}")
+
+name = re.sub(r'[\\/:*?"&lt;&gt;|]', "-", data["title"]) + "." + data["format"]
+print(f"Judul   : {data['title']}")
+print(f"Format  : {data['format'].upper()} {data['quality']}\n")
+
+req = urllib.request.Request(data["url"], headers={"User-Agent": "Mozilla/5.0"})
+with urllib.request.urlopen(req) as res, open(name, "wb") as f:
+    total = int(res.headers.get("Content-Length") or 0)
+    done = 0
+    while chunk := res.read(65536):
+        f.write(chunk)
+        done += len(chunk)
+        mb = done / 1048576
+        if total:
+            print(f"\rDownload: {done * 100 // total}% ({mb:.1f}/{total / 1048576:.1f} MB)", end="")
+        else:
+            print(f"\rDownload: {mb:.1f} MB", end="")
+
+print(f"\n\nSelesai! File tersimpan: {name}")</pre>
+      <button class="copy-btn" id="btnCopy">Salin</button>
     </div>
   </section>
 
@@ -937,83 +946,15 @@ $('url').addEventListener('keydown', e => {
   if (e.key === 'Enter') $('btnGet').click()
 })
 
-let ep = 'info'
-
-function tryLink() {
-  const url = $('tryUrl').value.trim()
-  let link = `${API || location.origin}/api/${ep}?url=${url ? encodeURIComponent(url) : '<link youtube>'}`
-  if (ep === 'download') link += `&format=${$('tryFmt').value}&quality=${$('tryQual').value}`
-  return link
-}
-function updateTry() {
-  $('tryReq').textContent = 'GET ' + tryLink()
-}
-function fillTryQual() {
-  $('tryQual').innerHTML = QUAL[$('tryFmt').value].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')
-  updateTry()
-}
-fillTryQual()
-
-$('tryTabs').addEventListener('click', e => {
-  const b = e.target.closest('.fmt')
-  if (!b) return
-  $('tryTabs').querySelectorAll('.fmt').forEach(x => x.classList.remove('active'))
-  b.classList.add('active')
-  ep = b.dataset.ep
-  $('tryOpts').style.display = ep === 'download' ? 'grid' : 'none'
-  updateTry()
-})
-$('tryUrl').addEventListener('input', updateTry)
-$('tryFmt').addEventListener('change', fillTryQual)
-$('tryQual').addEventListener('change', updateTry)
-$('tryUrl').addEventListener('keydown', e => {
-  if (e.key === 'Enter') $('btnTry').click()
-})
-
+$('pyCode').textContent = $('pyCode').textContent.replace('__API__', API || location.origin)
 $('btnCopy').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(tryLink())
+    await navigator.clipboard.writeText($('pyCode').textContent)
     $('btnCopy').textContent = 'Tersalin ✓'
   } catch {
     $('btnCopy').textContent = 'Gagal'
   }
   setTimeout(() => $('btnCopy').textContent = 'Salin', 1500)
-})
-
-$('btnTry').addEventListener('click', async () => {
-  if (!$('tryUrl').value.trim()) {
-    $('tryUrl').focus()
-    $('tryUrl').classList.add('invalid')
-    setTimeout(() => $('tryUrl').classList.remove('invalid'), 900)
-    return
-  }
-  const t0 = Date.now()
-  const timer = setInterval(() => {
-    $('btnTry').innerHTML = `${SPIN}Nunggu respon... ${((Date.now() - t0) / 1000).toFixed(0)}s`
-  }, 250)
-  $('btnTry').disabled = true
-  $('btnTry').innerHTML = SPIN + 'Nunggu respon... 0s'
-  $('tryMeta').style.display = 'none'
-  $('tryRes').style.display = 'none'
-  let code = 0
-  let body = ''
-  try {
-    const res = await fetch(tryLink())
-    code = res.status
-    body = await res.text()
-    try { body = JSON.stringify(JSON.parse(body), null, 2) } catch {}
-  } catch (err) {
-    body = err.message || 'request gagal'
-  }
-  clearInterval(timer)
-  $('btnTry').disabled = false
-  $('btnTry').textContent = 'Kirim Request'
-  $('tryStatus').textContent = code ? `HTTP ${code}` : 'Network Error'
-  $('tryStatus').className = code >= 200 && code < 300 ? 'pill green' : 'pill red'
-  $('tryTime').textContent = `${((Date.now() - t0) / 1000).toFixed(2)} detik`
-  $('tryMeta').style.display = 'flex'
-  $('tryRes').textContent = body
-  $('tryRes').style.display = 'block'
 })
 </script>
 </body>
