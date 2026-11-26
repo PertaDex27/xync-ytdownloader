@@ -127,6 +127,15 @@ const integer = (value, min, max) => Number.isSafeInteger(value) && value >= min
 const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
 const hex = (value, max) => text(value, max) && /^[0-9a-f]+$/i.test(value)
 
+function format1Integer(value, field, max) {
+  const normalized = typeof value === 'string' && /^\d{1,10}$/.test(value) ? Number(value) : value
+  if (!integer(normalized, 1, max)) {
+    const received = typeof normalized === 'number' && Number.isFinite(normalized) ? normalized : typeof value
+    fail(`format 1 ${field} must be an integer from 1 to ${max} (received ${received})`)
+  }
+  return normalized
+}
+
 function validatePow(payload) {
   if (!payload || !text(payload.salt, 4096) || !hex(payload.target, 64)) fail('invalid PoW payload')
 }
@@ -153,11 +162,15 @@ export function prepareChallenge(data) {
     tasks = data.challenges
   } else if (data.format === undefined || data.format === 1) {
     const c = data.challenge
-    if (!c || !integer(c.c, 1, 64) || !integer(c.s, 1, 4096) || !integer(c.d, 1, 64)) fail('invalid format 1 parameters')
-    tasks = Array.from({ length: c.c }, (_, i) => ({
+    if (!c || typeof c !== 'object' || Array.isArray(c)) fail('missing format 1 challenge object')
+    const count = format1Integer(c.c, 'c (task count)', 4096)
+    const saltLength = format1Integer(c.s, 's (salt length)', 4096)
+    const difficulty = format1Integer(c.d, 'd (target length)', 64)
+    if (count * (saltLength + difficulty) > 1048576) fail('format 1 generated tasks exceed 1 MiB')
+    tasks = Array.from({ length: count }, (_, i) => ({
       protocol: 'sha256-pow', payload: {
-        salt: prngHex(`${data.token}${i + 1}`, c.s),
-        target: prngHex(`${data.token}${i + 1}d`, c.d),
+        salt: prngHex(`${data.token}${i + 1}`, saltLength),
+        target: prngHex(`${data.token}${i + 1}d`, difficulty),
       },
     }))
   } else fail('unsupported format')
