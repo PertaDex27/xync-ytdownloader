@@ -1,3 +1,4 @@
+import { errorPayload } from './diagnostics.js'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
@@ -10,6 +11,7 @@ function send(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
   })
   res.end(JSON.stringify(data))
 }
@@ -56,7 +58,7 @@ async function handle(req, res) {
           const fileUrl = await convert(videoId, format, quality, (msg, frac) => push({ type: 'status', msg, frac }))
           push({ type: 'done', status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
         } catch (err) {
-          push({ type: 'error', message: err.message || 'server error' })
+          push({ type: 'error', ...errorPayload(err) })
         }
         return res.end()
       }
@@ -66,7 +68,7 @@ async function handle(req, res) {
       return send(res, 200, { status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
     }
   } catch (err) {
-    return send(res, 500, { status: 'error', message: err.message || 'server error' })
+    return send(res, 500, { status: 'error', ...errorPayload(err) })
   }
 }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { solveCap } from './cap.js'
+import { captureResponse } from './diagnostics.js'
 
 const BASE = 'https://embed.dlsrv.online'
 const SOLVER = 'https://check.dlsrv.online/30bb427100/'
@@ -109,13 +110,18 @@ async function fetchJson(url, opts = {}) {
 async function createSession(onStatus) {
   const capToken = await getCapToken(onStatus)
   onStatus('Verifikasi session...')
-  const { status, body } = await fetchJson(`${BASE}/api/verify`, {
+  const verifyUrl = `${BASE}/api/verify`
+  const res = await fetch(verifyUrl, {
     method: 'POST',
     headers: { ...BASE_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify({ capToken }),
   })
-  if (status === 403) throw new Error('verify rejected (403 Forbidden)')
-  if (!body?.token) throw new Error(`verify failed: ${status} ${JSON.stringify(body)}`)
+  const { body, diagnostic } = await captureResponse(res, verifyUrl, [capToken])
+  if (!res.ok || !body?.token) {
+    const err = new Error(res.status === 403 ? 'verify rejected (403 Forbidden)' : `verify failed: HTTP ${res.status}`)
+    err.diagnostic = diagnostic
+    throw err
+  }
   return { token: body.token, exp: decodeJwtExp(body.token) }
 }
 

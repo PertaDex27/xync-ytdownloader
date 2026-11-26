@@ -1,3 +1,4 @@
+import { errorPayload } from '../src/diagnostics.js'
 import { convert, normalizeFormat, normalizeQuality, extractVideoId, fetchMeta } from '../src/engine.js'
 
 export default async function handler(req, res) {
@@ -22,7 +23,7 @@ export default async function handler(req, res) {
       const url = await convert(videoId, format, quality, (msg, frac) => push({ type: 'status', msg, frac }))
       push({ type: 'done', status: 'ok', videoId, title: meta.title, author: meta.author, thumbnail: meta.thumbnail, format, quality, url })
     } catch (err) {
-      push({ type: 'error', message: err.message })
+      push({ type: 'error', ...errorPayload(err) })
     }
     return res.end()
   }
@@ -32,6 +33,6 @@ export default async function handler(req, res) {
     const url = await convert(videoId, format, quality)
     res.status(200).json({ status: 'ok', videoId, title: meta.title, author: meta.author, thumbnail: meta.thumbnail, format, quality, url })
   } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message })
+    res.status(500).json({ status: 'error', ...errorPayload(err) })
   }
 }
