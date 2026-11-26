@@ -1,232 +1,95 @@
-# CapSolver — Cara Kerja & Spesifikasi
+# Apa itu Yt Downloader?
 
-Dokumentasi lengkap solver captcha **Cap** (proof-of-work) yang dipake di project ini. Cukup detail buat lo bikin ulang dari nol — tinggal lempar file ini ke dev/AI lain kalau perlu.
+Yt Downloader itu web buat ngubah link YouTube jadi file video atau audio yang bisa lo simpen. Tinggal tempel link, pilih format sama kualitas, terus unduh. Nggak perlu login atau install aplikasi kalau cuma mau pake versi webnya.
 
-Struktur file yang berhubungan:
+Dibikin sama **XyncTeam**. Selain lewat browser, bisa juga dijalanin di komputer sendiri lewat menu terminal atau dipake API-nya buat project lo.
 
-| File | Fungsinya |
+**[Buka webnya di sini →](https://xync-ytdownloader.vercel.app)** · [English](README-en.md)
+
+Penasaran tampilannya? Langsung buka webnya aja, sekalian cobain. Nggak pake screenshot di sini biar nggak beda sama tampilan yang lagi jalan, anjay.
+
+## Bisa buat apa aja?
+
+- Unduh audio: **MP3, M4A, dan OPUS**.
+- Unduh video: **MP4**, dengan pilihan resolusi sampai **2160p / 4K**.
+- Cek judul, nama channel, dan thumbnail sebelum lanjut.
+- Liat status proses selama nyiapin link unduhan.
+- Ganti tema gelap atau terang. Di HP juga bisa.
+- Jalanin menu terminal kalau lo lebih nyaman ngulik dari situ.
+
+Pilihan kualitas itu request, bukan janji semua video bakal tersedia di kualitas itu. Sumbernya bukan 4K ya nggak mendadak jadi 4K beneran cuma gara-gara dipilih paling tinggi.
+
+## Cara pakenya
+
+1. Buka [web Yt Downloader](https://xync-ytdownloader.vercel.app).
+2. Tempel link YouTube, terus klik **Download** buat ambil info videonya.
+3. Pilih format dan kualitas yang lo butuhin.
+4. Mulai konversi, tunggu sampai link filenya siap.
+5. Klik **Download File** buat ngunduh hasilnya.
+
+Link video biasa, Shorts, atau `youtu.be` bisa dipake. Kalau lagi gagal, cek link sama koneksi dulu; jangan langsung dihajar klik berkali-kali.
+
+## Mau jalanin sendiri?
+
+Siapin **Node.js 22 atau lebih baru** sama Git, lalu:
+
+```sh
+git clone https://github.com/PertaDex27/xync-ytdownloader.git
+cd xync-ytdownloader
+npm run startServerLocal
+```
+
+Buka **http://localhost:3000** di browser. Project ini nggak butuh paket npm tambahan buat jalan.
+
+Kalau mau menu terminal:
+
+```sh
+npm run menu
+```
+
+Dari situ lo bisa ambil info video, konversi, simpen file, atau nyalain dan matiin server lokal. File yang diunduh lewat terminal disimpen di folder tempat lo ngejalanin perintahnya.
+
+Port default-nya `3000`. Bisa diganti lewat environment variable `PORT`.
+
+## Buat yang mau pake API
+
+Ganti alamat di contoh ini kalau server lo jalan di tempat lain.
+
+**Ambil info video:**
+
+```sh
+curl "http://localhost:3000/api/info?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+```
+
+**Minta link MP3:**
+
+```sh
+curl "http://localhost:3000/api/download?id=dQw4w9WgXcQ&format=mp3&quality=128"
+```
+
+Respons sukses berisi `status: "ok"` dan data hasilnya. Endpoint download ngasih URL file di field `url`, bukan langsung ngirim isi file. Kalau gagal, cek field `message`.
+
+| Parameter | Buat apa? |
 |---|---|
-| `src/cap.js` | Otaknya — dari challenge sampe dapet `capToken` |
-| `src/pow-worker.js` | Worker paralel buat brute-force PoW  |
-| `api/solve.js` | Dibungkus jadi endpoint HTTP (`{status, capToken, solvedIn}`) |
-| `src/engine.js` | Pake `capToken` buat session & download |
+| `url` / `id` | Link YouTube atau ID video |
+| `format` | `mp3`, `mp4`, `m4a`, atau `opus`; default `mp3` |
+| `quality` | Kualitas yang diminta, misalnya `128` buat MP3 atau `720` buat MP4 |
+| `stream=1` | Khusus download: terima status proses lewat Server-Sent Events |
 
----
+## Kalau prosesnya gagal
 
-## 1. Alur Besarnya
+Project ini masih bergantung sama layanan pihak ketiga. Jadi ada kalanya proses lama, kena batas request, atau berhenti gara-gara layanan sumbernya berubah. Bukan berarti koneksi lo pasti bermasalah.
 
-```
-POST /challenge    dapet challenge (token + tugas)
-solve tugasnya     solutions (nonce / y / instr)
-POST /redeem       dapet capToken
-```
+- Coba lagi nanti kalau kena rate limit, jangan spam request.
+- Coba kualitas lebih rendah kalau video besar kelamaan diproses.
+- Video privat, dibatasi wilayah, atau konten tertentu bisa aja nggak tersedia.
+- File besar butuh ruang penyimpanan dan memori yang cukup, terutama di HP.
+- Link unduhan dari layanan sumber bisa kedaluwarsa; bikin ulang kalau udah nggak bisa dibuka.
 
-Endpoint solver (selanjutnya disebut `SOLVER`, di project ini `https://check.dlsrv.online/30bb427100/`):
+## Soal penggunaan
 
-- `POST {SOLVER}challenge` → JSON challenge
-- `POST {SOLVER}redeem` body `{ token, solutions, instr? }` → `{ success: true, token: "<capToken>" }`
+Pake buat konten punya lo sendiri, yang udah dapet izin, atau yang lisensinya memang ngebolehin diunduh. Bisa diunduh bukan berarti bebas diupload ulang, ya. Tetep hormatin hak kreator dan aturan layanan yang lo pake.
 
----
+## Lisensi
 
-## 2. Header Wajib
-
-Request ke solver **HARUS** bawa header kayak browser beneran — kalau nggak, kena **403**.
-
-```
-User-Agent: Mozilla/5.0 (Linux; Android 10; K) ... Chrome/152.0.0.0 ... OPR/102.0.0.0
-Accept: */*
-Accept-Language: en-US,en;q=0.9
-Origin: https://embed.dlsrv.online
-Referer: https://embed.dlsrv.online/
-sec-ch-ua: "OperaMobile";v="102", "Opera";v="137", "Chromium";v="152", " Not A;Brand";v="99"
-sec-ch-ua-mobile: ?1
-sec-ch-ua-platform: "Android"
-Sec-Fetch-Site: cross-site
-Sec-Fetch-Mode: cors
-Sec-Fetch-Dest: empty
-```
-
->  Tanpa `Origin`/`Referer`/client hints → respon **Blocked**.
-> Rate limit challenge: **~10x/menit per IP** — jangan sampe spam!
-
----
-
-## 3. Dua Format Challenge
-
-### Format 1 (default, `format` tidak ada / bukan 2)
-
-```json
-{
-  "token": "abc123...",
-  "challenge": { "c": 4, "s": 16, "d": 8 }
-}
-```
-
-Bikin **c pasangan (salt, target)**, `i = 1..c`:
-
-```
-salt_i   = prngHex(token + String(i), s)
-target_i = prngHex(token + String(i) + "d", d)
-```
-
-`solutions` = array nonce (angka), urut sama kayak pasangan:
-
-```json
-[184213, 9932, 421178, 60213]
-```
-
-### Format 2 (`format: 2`, `challenges: [...]`)
-
-```json
-{ "token": "...", "format": 2, "challenges": [ { "protocol": "sha256-pow", "payload": {...} }, ... ] }
-```
-
-`solutions` = object key-index, value tergantung protocol:
-
-| Protocol | Payload | `solutions[i]` |
-|---|---|---|
-| `sha256-pow` | `{ salt, target }` | `{ nonce: <angka> }` |
-| `rsw` | `{ N, x, t }` | `{ y: "<hex>" }` |
-| `instrumentation` | `{ blob }` | `{ instr: { i, state, ts } }` |
-
-Protocol lain → error `unsupported challenge protocol`.
-
-### Field `instr` Tambahan
-
-Kalau response challenge punya field `instrumentation` (di luar format), tambahin juga:
-
-```json
-body.instr = { i, state, ts }
-```
-
----
-
-## 4. Algoritma Inti
-
-### `fnvHash(str)` — hash FNV-1 32-bit
-
-```js
-function fnvHash(str) {
-  let h = 0x811c9dc5
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)
-  }
-  return h >>> 0
-}
-```
-
-### `prngHex(seed, len)` — PRNG xorshift dari seed, output hex
-
-```js
-function prngHex(seed, len) {
-  let h = fnvHash(seed)
-  let out = ''
-  while (out.length < len) {
-    h ^= h << 13
-    h ^= h >>> 17
-    h = (h ^= h << 5) >>> 0
-    out += h.toString(16).padStart(8, '0')
-  }
-  return out.substring(0, len)
-}
-```
-
-### `solvePow(salt, target)` — brute-force SHA-256
-
-Cari `nonce` (0, 1, 2, ...) biar `SHA256(salt + String(nonce))` prefix-nya bit-prefix match sama `target` (hex):
-
-- `bits = 4 * target.length`, `fullBytes = floor(bits / 8)`, `extraBits = bits % 8`
-- `mask = extraBits > 0 ? (255 << (8 - extraBits)) & 255 : 0`
-- Kalau panjang hex-nya ganjil, pad `target + "0"` dulu
-
->  Optimasi: pake `crypto.hash('sha256', data, 'buffer')` kalau Node ≥ 21, fallback ke `createHash`. Buffer di-reuse tiap iterasi biar gak boros alokasi.
-
-### `solveRsw(payload)` — repeated squaring
-
-```
-N = BigInt("0x" + payload.N)
-n = BigInt("0x" + payload.x)
-// ulang payload.t kali:
-n = (n * n) % N
-y = n.toString(16)  // tanpa prefix 0x
-```
-
-### `runInstrumentation(blobB64)` — forge objek `instr`
-
-1. `zlib.inflateRawSync(Buffer.from(blobB64, 'base64'))` → kode JS obfuscated
-2. Regex ambil nonce: `/nonce:\s*"([0-9a-f]+)"/i` → nilai `i`
-3. Regex ambil tail skrip → bungkus & run di `vm.runInNewContext` dengan DOM stub minimal (timeout 5 detik)
-4. Output: `{ i: nonce, state: <hasil return>, ts: Date.now() }`
-
-> `state` dikirim apa adanya — jangan di-clone/serialize manual.
-
----
-
-## 5. Paralelisasi PoW
-
-Format 1 bisa punya banyak pasangan — dikerjain bareng pake `worker_threads`:
-
-- `SharedArrayBuffer` + `Atomics.add` buat bagi tugas antar worker
-- Jumlah worker = `min(jumlah pasangan, jumlah CPU)`
-- Error di worker → terminate semua → **fallback sequential**
-
----
-
-## 6. API Contract
-
-```
-GET /api/solve
-```
-
-Sukses:
-```json
-{ "status": "ok", "capToken": "....", "solvedIn": 5012 }
-```
-
-Gagal:
-```json
-{ "status": "error", "message": "..." }
-```
-
-> ⏱ Waktu solve lokal ±5 detik (2 core), bisa lebih tergantung jumlah pasangan.
-
----
-
-## 7. Mode Remote (Opsional)
-
-- URL dari env `CAPSOLVER_URL` / `config.json` key `capsolver`
-- `GET <url>` → `{ "capToken": "..." }`
-- Kalau remote gagal / gak ada → otomatis fallback solve lokal
-
----
-
-## 8. Pemakaian di Downloader (`engine.js`)
-
-1. `POST {BASE}/api/verify` body `{ capToken }` → `{ token: "<JWT>" }` *(expired ±5 menit, ke-bind IP)*
-2. `POST {BASE}/api/session/touch` body `{ videoId }` — **WAJIB** sebelum download
-3. `POST {BASE}/api/v3/download` body `{ videoId, format, quality }` → `{ job }`
-4. `GET {BASE}/api/v3/progress?job=<job>` poll tiap **2 detik** → `{ progress, done, url }`
-5. Download dari URL hasil (`https://*.savenow.to/api/v2/download/<hex>`)
-
-Status code penting:
-
-| Kode | Artinya | Aksinya |
-|---|---|---|
-| 403 | Header/capToken salah | Cek header & solve ulang |
-| 401/403 step 2-4 | JWT expired/invalid | Reset session, verify ulang |
-| 429 di progress | Rate limit | Lanjut poll aja |
-| `"Session not ready"` | Touch belum keproses | Tunggu 2 det, retry |
-
----
-
-## 9. Checklist Bikin Ulang
-
-- [ ] Header browser lengkap (UA + sec-ch-ua + Origin/Referer + Sec-Fetch)
-- [ ] `fnvHash` + `prngHex` persis kayak di atas
-- [ ] `solvePow` brute-force SHA-256 dengan bit-prefix mask
-- [ ] Format 1: pasangan dari `prngHex`, solutions array
-- [ ] Format 2: handle `sha256-pow` / `rsw` / `instrumentation`
-- [ ] `instr` forge via `vm` + DOM stub, state dikirim apa adanya
-- [ ] Paralel worker + fallback sequential
-- [ ] `redeem` body `{ token, solutions }` + `instr` kalau ada
+[Apache License 2.0](LICENSE).

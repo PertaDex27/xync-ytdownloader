@@ -1,9 +1,18 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/index.html" }
+    {
+      "source": "/",
+      "destination": "/index.html"
+    }
   ],
   "functions": {
-    "api/solve.js": { "maxDuration": 60 },
-    "api/download.js": { "maxDuration": 60 }
+    "api/solve.js": {
+      "maxDuration": 60,
+      "includeFiles": "src/**"
+    },
+    "api/download.js": {
+      "maxDuration": 60,
+      "includeFiles": "src/**"
+    }
   }
 }
