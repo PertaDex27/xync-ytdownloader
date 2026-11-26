@@ -1,14 +1,10 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import { solveTask } from './cap-protocol.js'
+import { solvePow } from './cap.js'
 
-const { tasks, counter, deadline, maxNonce } = workerData
+const { pairs, counter } = workerData
 
-try {
-  for (;;) {
-    const i = Atomics.add(counter, 0, 1)
-    if (i >= tasks.length) break
-    parentPort.postMessage({ i, result: solveTask(tasks[i], { deadline, maxNonce }) })
-  }
-} catch (err) {
-  parentPort.postMessage({ error: err.message || 'cap task failed' })
+for (;;) {
+  const i = Atomics.add(counter, 0, 1)
+  if (i >= pairs.length) break
+  parentPort.postMessage({ i, nonce: solvePow(pairs[i][0], pairs[i][1]) })
 }
