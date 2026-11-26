@@ -610,7 +610,14 @@ footer b { color: var(--text); font-weight: 600; }
     </div>
 
     <div class="step" id="stepErr">
-      <div class="alert"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span id="errmsg"></span></div>
+      <div class="alert" role="alert"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><span id="errmsg"></span></div>
+      <div id="errorChoice" hidden aria-label="Pilihan respons error">
+        <p class="api-desc" id="errorResponseNote"></p>
+        <p class="api-desc">Mau simpen responsnya buat dicek? File HTML menampilkan isi respons sebagai teks, bukan menjalankan skripnya. Token disamarkan; cek dulu isinya sebelum dibagi.</p>
+        <button class="btn btn-primary" id="btnErrorResponse">Download respons error (.html)</button>
+        <button class="btn btn-ghost" id="btnDismissResponse" style="margin-top:8px">Nggak usah</button>
+      </div>
+      <p class="api-desc" id="errorUnavailable" hidden>Tidak ada respons HTTP yang bisa disimpan. Koneksi mungkin terputus sebelum server membalas.</p>
       <button class="btn btn-ghost" id="btnRetry" style="margin-top:12px">Coba Lagi</button>
     </div>
   </section>
@@ -799,20 +806,78 @@ function stopTick() {
   render()
 }
 
-function fail(msg) {
+let lastErrorResponse = null
+
+function responseError(message, diagnostic) {
+  const err = new Error(message)
+  err.diagnostic = diagnostic
+  return err
+}
+
+function browserDiagnostic(res, raw) {
+  return {
+    source: 'app', url: new URL(res.url || '/api/download', location.href).pathname,
+    status: res.status, statusText: res.statusText,
+    capturedAt: new Date().toISOString(),
+    headers: { 'content-type': res.headers.get('content-type') || '' },
+    body: raw.slice(0, 65536), truncated: raw.length > 65536,
+  }
+}
+
+async function readJsonResponse(res) {
+  const raw = await res.text()
+  let data
+  try { data = JSON.parse(raw) } catch {
+    throw responseError(`Server membalas non-JSON (HTTP ${res.status})`, browserDiagnostic(res, raw))
+  }
+  if (!res.ok || data?.status !== 'ok') {
+    throw responseError(data?.message || `Request gagal (HTTP ${res.status})`, data?.diagnostic || browserDiagnostic(res, raw))
+  }
+  return data
+}
+
+function fail(err) {
   clearInterval(tick)
-  $('errmsg').textContent = msg
+  lastErrorResponse = err?.diagnostic || null
+  $('errmsg').textContent = err?.message || String(err || 'Terjadi kesalahan')
+  $('errorChoice').hidden = !lastErrorResponse
+  $('errorUnavailable').hidden = Boolean(lastErrorResponse)
+  $('errorResponseNote').textContent = lastErrorResponse?.source === 'upstream'
+    ? `Respons provider asli dari ${lastErrorResponse.url} — HTTP ${lastErrorResponse.status}.`
+    : 'Ini respons aplikasi/proxy, bukan respons langsung dari provider.'
   show('stepErr')
 }
 
+function errorReportHtml(diagnostic) {
+  const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  const clean = value => String(value ?? '')
+    .replace(/("(?:[\w-]*token|authorization|cookie|set-cookie|password|secret|api[_-]?key)"\s*:\s*)"(?:\\.|[^"\\])*"/gi, '$1"[REDACTED]"')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+  const info = { ...diagnostic }
+  delete info.body
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; sandbox"><title>Respons error Yt Downloader</title></head><body><h1>Respons error Yt Downloader</h1><p>Body respons ditampilkan sebagai teks, bukan halaman provider yang aktif. Token disamarkan. Ini bukan jaminan semua data pribadi sudah terhapus.</p><h2>Detail respons</h2><pre>${escape(clean(JSON.stringify(info, null, 2)))}</pre><h2>Body respons${diagnostic.truncated ? ' (dipotong karena batas ukuran)' : ''}</h2><pre>${escape(clean(diagnostic.body))}</pre></body></html>`
+}
+
+$('btnErrorResponse').addEventListener('click', () => {
+  if (!lastErrorResponse) return
+  const url = URL.createObjectURL(new Blob([errorReportHtml(lastErrorResponse)], { type: 'text/html;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `yt-error-${Date.now()}.html`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+})
+$('btnDismissResponse').addEventListener('click', () => {
+  lastErrorResponse = null
+  $('errorChoice').hidden = true
+  $('btnRetry').focus()
+})
+
 async function readStream(res) {
   const type = res.headers.get('content-type') || ''
-  if (!type.includes('event-stream')) {
-    const data = await res.json().catch(() => null)
-    if (!data) throw new Error(`server tidak merespons (HTTP ${res.status}), coba lagi`)
-    if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'konversi gagal')
-    return data
-  }
+  if (!type.includes('event-stream')) return readJsonResponse(res)
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
   let buf = ''
   for (;;) {
@@ -825,7 +890,10 @@ async function readStream(res) {
       if (!part.startsWith('data: ')) continue
       const ev = JSON.parse(part.slice(6))
       if (ev.type === 'status') onStatus(ev.msg, ev.frac)
-      if (ev.type === 'error') throw new Error(ev.message || 'konversi gagal')
+      if (ev.type === 'error') {
+        await reader.cancel().catch(() => {})
+        throw responseError(ev.message || 'konversi gagal', ev.diagnostic || browserDiagnostic(res, JSON.stringify(ev)))
+      }
       if (ev.type === 'done') {
         reader.cancel()
         return ev
@@ -843,20 +911,19 @@ $('btnGet').addEventListener('click', async () => {
     setTimeout(() => $('url').classList.remove('invalid'), 900)
     return
   }
+  lastErrorResponse = null
   $('btnGet').disabled = true
   $('btnGet').innerHTML = SPIN + 'Memuat info video...'
   try {
     const res = await fetch(`${API}/api/info?url=${encodeURIComponent(url)}`)
-    const data = await res.json().catch(() => null)
-    if (!data) throw new Error(`server tidak merespons (HTTP ${res.status}), coba lagi`)
-    if (!res.ok || data.status !== 'ok') throw new Error(data.message || 'video tidak ditemukan')
+    const data = await readJsonResponse(res)
     meta = data
     $('thumb').src = $('pthumb').src = data.thumbnail || `https://i.ytimg.com/vi/${data.videoId}/hqdefault.jpg`
     $('vtitle').textContent = $('ptitle').textContent = data.title || data.videoId
     $('vauthor').textContent = data.author || ''
     show('step2')
   } catch (err) {
-    fail(err.message || 'gagal memuat video')
+    fail(err)
   } finally {
     $('btnGet').disabled = false
     $('btnGet').textContent = 'Download'
@@ -864,6 +931,7 @@ $('btnGet').addEventListener('click', async () => {
 })
 
 $('btnConvert').addEventListener('click', async () => {
+  lastErrorResponse = null
   const url = $('url').value.trim()
   const quality = $('quality').value
   $('pformat').textContent = `${fmt.toUpperCase()} • ${$('quality').selectedOptions[0].textContent}`
@@ -883,7 +951,7 @@ $('btnConvert').addEventListener('click', async () => {
     dlName = `${(data.title || 'download').replace(/[\\/:*?"<>|]/g, '-')}.${data.format || fmt}`
     setTimeout(() => show('step4'), 450)
   } catch (err) {
-    fail(err.message || 'konversi gagal')
+    fail(err)
   }
 })
 
@@ -940,6 +1008,7 @@ $('btnAgain').addEventListener('click', () => {
   $('url').focus()
 })
 $('btnRetry').addEventListener('click', () => {
+  lastErrorResponse = null
   show(meta ? 'step2' : 'step1')
 })
 $('url').addEventListener('keydown', e => {
