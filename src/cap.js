@@ -1,8 +1,7 @@
-import crypto from 'node:crypto'
-import vm from 'node:vm'
-import zlib from 'node:zlib'
 import os from 'node:os'
 import { Worker } from 'node:worker_threads'
+import { prepareChallenge } from './cap-protocol.js'
+export { solvePow } from './cap-protocol.js'
 
 const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36 OPR/102.0.0.0'
 
@@ -20,214 +19,130 @@ const headers = {
   'Sec-Fetch-Dest': 'empty',
 }
 
-function fnvHash(str) {
-  let h = 0x811c9dc5
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)
-  }
-  return h >>> 0
+let active = 0
+
+function positive(value, fallback, name, max) {
+  const n = value ?? fallback
+  if (!Number.isSafeInteger(n) || n < 1 || n > max) throw new Error(`cap invalid option: ${name}`)
+  return n
 }
 
-function prngHex(seed, len) {
-  let h = fnvHash(seed)
-  let out = ''
-  while (out.length < len) {
-    h ^= h << 13
-    h ^= h >>> 17
-    h = (h ^= h << 5) >>> 0
-    out += h.toString(16).padStart(8, '0')
-  }
-  return out.substring(0, len)
-}
-
-const hashOneShot = typeof crypto.hash === 'function'
-  ? data => crypto.hash('sha256', data, 'buffer')
-  : data => crypto.createHash('sha256').update(data).digest()
-
-export function solvePow(salt, target) {
-  const bits = 4 * target.length
-  const fullBytes = Math.floor(bits / 8)
-  const extraBits = bits % 8
-  const padded = target.length % 2 === 0 ? target : `${target}0`
-  const targetBytes = Buffer.from(padded, 'hex')
-  const mask = extraBits > 0 ? (255 << (8 - extraBits)) & 255 : 0
-  const saltLen = Buffer.byteLength(salt)
-  const buf = Buffer.allocUnsafe(saltLen + 16)
-  buf.write(salt, 0, 'ascii')
-  for (let nonce = 0; ; nonce++) {
-    let p = saltLen
-    let n = nonce
-    do {
-      buf[p++] = 48 + (n % 10)
-      n = Math.floor(n / 10)
-    } while (n)
-    for (let i = saltLen, j = p - 1; i < j; i++, j--) {
-      const tmp = buf[i]
-      buf[i] = buf[j]
-      buf[j] = tmp
-    }
-    const hash = hashOneShot(buf.subarray(0, p))
-    let ok = true
-    for (let i = 0; i < fullBytes; i++) {
-      if (hash[i] !== targetBytes[i]) { ok = false; break }
-    }
-    if (ok && extraBits > 0 && (hash[fullBytes] & mask) !== (targetBytes[fullBytes] & mask)) ok = false
-    if (ok) return nonce
-  }
-}
-
-function solveRsw(payload) {
-  const N = BigInt(`0x${payload.N}`)
-  let n = BigInt(`0x${payload.x}`)
-  const rounds = 0 | payload.t
-  for (let i = 0; i < rounds; i++) n = (n * n) % N
-  return n.toString(16)
-}
-
-function makeDomStub() {
-  const el = () => {
-    const node = {
-      children: [],
-      parentNode: null,
-      style: {},
-      _text: '',
-      get innerText() { return this._text },
-      set innerText(v) { this._text = String(v) },
-      appendChild(child) {
-        child.parentNode = this
-        this.children.push(child)
-        return child
-      },
-      removeChild(child) {
-        const i = this.children.indexOf(child)
-        if (i >= 0) this.children.splice(i, 1)
-        child.parentNode = null
-        return child
-      },
-      get lastElementChild() { return this.children[this.children.length - 1] || null },
-    }
-    return node
-  }
-  return {
-    document: { createElement: () => el(), body: el() },
-    navigator: { userAgent: UA },
-  }
-}
-
-function runInstrumentation(blobB64) {
-  const compressed = Buffer.from(blobB64, 'base64')
-  const code = zlib.inflateRawSync(compressed).toString('utf-8')
-  const nonce = code.match(/nonce:\s*"([0-9a-f]+)"/i)?.[1] || ''
-  const tail = code.match(/blocked:\s*true\s*\},\s*'\*'\);return;\}([\s\S]*?)return (\w+);\}\)\(\);/)
-  if (!tail) throw new Error('instr payload shape changed')
-  const stub = makeDomStub()
-  const sandbox = {
-    document: stub.document,
-    navigator: stub.navigator,
-    parseInt,
-    Date,
-  }
-  const script = `(function(){${tail[1]}\nreturn ${tail[2]};})()`
-  const state = vm.runInNewContext(script, sandbox, { timeout: 5000 })
-  return { i: nonce, state, ts: Date.now() }
-}
-
-function buildFormat1Pairs(token, challenge) {
-  const pairs = []
-  for (let i = 1; i <= challenge.c; i++) {
-    pairs.push([prngHex(`${token}${i}`, challenge.s), prngHex(`${token}${i}d`, challenge.d)])
-  }
-  return pairs
-}
-
-function solvePowSequential(pairs, onStatus) {
-  const total = pairs.length
-  return pairs.map(([salt, target], i) => {
-    onStatus(`Nyelesein captcha Cap... ${i + 1}/${total}`, (i + 1) / total)
-    return solvePow(salt, target)
+async function requestJson(url, body, signal, requestTimeoutMs) {
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)])
+  const res = await fetch(url, {
+    method: 'POST', redirect: 'error', signal: requestSignal,
+    headers: body ? { ...headers, 'Content-Type': 'application/json' } : headers,
+    ...(body ? { body: JSON.stringify(body) } : {}),
   })
-}
-
-function solvePowParallel(pairs, onStatus) {
-  return new Promise((resolve, reject) => {
-    const total = pairs.length
-    const size = Math.max(1, Math.min(total, os.cpus().length))
-    const counter = new Int32Array(new SharedArrayBuffer(4))
-    const results = new Array(total)
-    const workers = []
-    let done = 0
-
-    const finish = () => {
-      for (const w of workers) w.terminate()
-      resolve(results)
-    }
-
-    for (let w = 0; w < size; w++) {
-      let worker
-      try {
-        worker = new Worker(new URL('./pow-worker.js', import.meta.url), { workerData: { pairs, counter } })
-      } catch (err) {
-        for (const w2 of workers) w2.terminate()
-        return reject(err)
-      }
-      worker.on('message', ({ i, nonce }) => {
-        results[i] = nonce
-        done++
-        onStatus(`Nyelesein captcha Cap... ${done}/${total}`, done / total)
-        if (done === total) finish()
-      })
-      worker.on('error', err => {
-        for (const w2 of workers) w2.terminate()
-        reject(err)
-      })
-      workers.push(worker)
-    }
-  })
-}
-
-async function solvePowBatch(pairs, onStatus) {
+  if (!res.ok) {
+    await res.body?.cancel()
+    const err = new Error(`cap ${url.pathname.split('/').pop()}: HTTP ${res.status}${res.status === 429 ? ' (rate limited; try later)' : ''}`)
+    err.status = res.status
+    throw err
+  }
+  const chunks = []
+  let size = 0
   try {
-    return await solvePowParallel(pairs, onStatus)
-  } catch {
-    return solvePowSequential(pairs, onStatus)
+    for await (const chunk of res.body) {
+      size += chunk.length
+      if (size > 1048576) throw new Error('cap response too large')
+      chunks.push(chunk)
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch (err) {
+    if (err instanceof SyntaxError) throw new Error('cap upstream returned invalid JSON')
+    throw err
   }
 }
 
-export async function solveCap(apiEndpoint, onStatus = () => {}) {
-  const base = apiEndpoint.endsWith('/') ? apiEndpoint : `${apiEndpoint}/`
-  onStatus('Ambil challenge captcha...')
-  const res = await fetch(`${base}challenge`, { method: 'POST', headers })
-  const data = await res.json()
-  if (data.error) throw new Error(`cap challenge: ${data.error}`)
-
-  let solutions
-  if (data.format === 2 && Array.isArray(data.challenges)) {
-    solutions = {}
-    const total = data.challenges.length
-    for (let i = 0; i < total; i++) {
-      const c = data.challenges[i]
-      onStatus(`Nyelesein captcha Cap... ${i + 1}/${total}`, (i + 1) / total)
-      if (c.protocol === 'sha256-pow') solutions[i] = { nonce: solvePow(c.payload.salt, c.payload.target) }
-      else if (c.protocol === 'rsw') solutions[i] = { y: solveRsw(c.payload) }
-      else if (c.protocol === 'instrumentation') solutions[i] = { instr: runInstrumentation(c.payload.blob) }
-      else throw new Error(`unsupported challenge protocol: ${c?.protocol}`)
-    }
-  } else {
-    const pairs = buildFormat1Pairs(data.token, data.challenge)
-    solutions = await solvePowBatch(pairs, onStatus)
+async function solveTasks(tasks, onStatus, { signal, deadline, maxWorkers, maxNonce }) {
+  signal.throwIfAborted()
+  const counter = new Int32Array(new SharedArrayBuffer(4))
+  const results = new Array(tasks.length)
+  const seen = new Set()
+  const workers = []
+  let abort
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false
+      const fail = err => { if (!settled) { settled = true; reject(err) } }
+      abort = () => fail(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      const count = Math.min(tasks.length, maxWorkers, os.availableParallelism?.() || os.cpus().length || 1)
+      for (let w = 0; w < count; w++) {
+        if (settled) break
+        let worker
+        try {
+          worker = new Worker(new URL('./pow-worker.js', import.meta.url), {
+            workerData: { tasks, counter, deadline, maxNonce },
+            resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
+          })
+        } catch (err) {
+          fail(new Error('cap worker could not start', { cause: err }))
+          break
+        }
+        workers.push(worker)
+        worker.on('message', message => {
+          if (settled) return
+          const { i, result, error } = message
+          if (error) return fail(new Error(error))
+          if (!Number.isInteger(i) || i < 0 || i >= tasks.length || seen.has(i) || !result) return fail(new Error('cap invalid worker result'))
+          seen.add(i)
+          results[i] = result
+          try { onStatus(`Nyelesein captcha Cap... ${seen.size}/${tasks.length}`, seen.size / tasks.length) }
+          catch (err) { return fail(err) }
+          if (seen.size === tasks.length) { settled = true; resolve(results) }
+        })
+        worker.on('error', err => fail(new Error('cap worker failed', { cause: err })))
+        worker.on('exit', code => {
+          if (!settled && (code !== 0 || workers.every(w => w.threadId === -1))) fail(new Error('cap worker exited before completion'))
+        })
+      }
+    })
+  } finally {
+    signal.removeEventListener('abort', abort)
+    await Promise.allSettled(workers.map(worker => worker.terminate()))
   }
+}
 
-  onStatus('Verifikasi captcha...')
-  const body = { token: data.token, solutions }
-  if (data.instrumentation) body.instr = runInstrumentation(data.instrumentation)
-
-  const redeem = await fetch(`${base}redeem`, {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const out = await redeem.json()
-  if (!out.success) throw new Error(`cap redeem: ${out.error || JSON.stringify(out)}`)
-  return out.token
+export async function solveCap(apiEndpoint, onStatus = () => {}, options = {}) {
+  const timeoutMs = positive(options.timeoutMs, 45000, 'timeoutMs', 300000)
+  const requestTimeoutMs = positive(options.requestTimeoutMs, 10000, 'requestTimeoutMs', 60000)
+  const maxWorkers = positive(options.maxWorkers, 2, 'maxWorkers', 4)
+  const maxNonce = positive(options.maxNonce, 50000000, 'maxNonce', Number.MAX_SAFE_INTEGER)
+  const base = new URL(apiEndpoint.endsWith('/') ? apiEndpoint : `${apiEndpoint}/`)
+  if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error('cap invalid endpoint')
+  if (active >= 2) throw new Error('cap solver busy; try later')
+  const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(options.signal ? [options.signal] : [])])
+  signal.throwIfAborted()
+  const deadline = Date.now() + timeoutMs
+  active++
+  try {
+    onStatus('Ambil challenge captcha...')
+    const data = await requestJson(new URL('challenge', base), null, signal, requestTimeoutMs)
+    if (data?.error) throw new Error('cap challenge rejected by upstream')
+    const tasks = prepareChallenge(data)
+    const results = await solveTasks(tasks, onStatus, { signal, deadline, maxWorkers, maxNonce })
+    const hasExtra = data.instrumentation !== undefined
+    const count = tasks.length - (hasExtra ? 1 : 0)
+    const solutions = data.format === 2
+      ? Object.fromEntries(results.slice(0, count).map((result, i) => [i, result]))
+      : results.slice(0, count).map(result => result.nonce)
+    const body = { token: data.token, solutions }
+    if (hasExtra) body.instr = results.at(-1).instr
+    signal.throwIfAborted()
+    onStatus('Verifikasi captcha...')
+    const out = await requestJson(new URL('redeem', base), body, signal, requestTimeoutMs)
+    if (out?.success !== true || typeof out.token !== 'string' || !out.token.trim() || out.token.length > 16384) throw new Error('cap redeem rejected or missing token')
+    return out.token
+  } catch (err) {
+    if (signal.aborted) {
+      if (signal.reason?.name === 'TimeoutError') throw new Error('cap solve timed out', { cause: err })
+      throw signal.reason
+    }
+    if (err.name === 'TimeoutError') throw new Error('cap upstream request timed out', { cause: err })
+    throw err
+  } finally {
+    active--
+  }
 }
