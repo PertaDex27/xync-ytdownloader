@@ -45,8 +45,8 @@ let _ffmpeg = null
 export function ffmpegAvailable() {
   if (_ffmpeg !== null) return _ffmpeg
   try {
-    spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' })
-    _ffmpeg = true
+    const r = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' })
+    _ffmpeg = !r.error && r.status === 0
   } catch { _ffmpeg = false }
   return _ffmpeg
 }
