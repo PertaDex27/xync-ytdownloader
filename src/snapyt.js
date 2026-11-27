@@ -11,6 +11,64 @@ export const AJAX = `${BASE}/wp-admin/admin-ajax.php`
 
 const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36'
 
+// Header ala browser beneran — Cloudflare lebih galak ke request yg "polos".
+const BROWSER_HEADERS = {
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'sec-ch-ua': '"Chromium";v="154", "Not.A/Brand";v="99", "Google Chrome";v="154"',
+  'sec-ch-ua-mobile': '?1',
+  'sec-ch-ua-platform': '"Android"',
+  'sec-fetch-dest': 'document',
+  'sec-fetch-mode': 'navigate',
+  'sec-fetch-site': 'none',
+  'upgrade-insecure-requests': '1',
+}
+
+// Opsional: lewatin proxy kalau IP server (mis. Vercel) diblok Cloudflare.
+// Set env SNAPYT_PROXY=http://user:pass@host:port
+let _dispatcher
+async function dispatcher() {
+  const proxy = process.env.SNAPYT_PROXY
+  if (!proxy) return undefined
+  if (_dispatcher === undefined) {
+    try {
+      const { ProxyAgent } = await import('undici')
+      _dispatcher = new ProxyAgent(proxy)
+      dbg('proxy aktif', new URL(proxy).host)
+    } catch (err) {
+      console.warn('[snapyt] SNAPYT_PROXY di-set tapi undici gak ada:', err.message)
+      _dispatcher = null
+    }
+  }
+  return _dispatcher || undefined
+}
+
+// Bikin error yg jelas: siapa yg nolak (Cloudflare / origin), cf-ray, potongan body.
+async function upstreamError(res, what) {
+  let body = ''
+  try { body = await res.text() } catch {}
+  const h = name => res.headers.get(name) || ''
+  const cf = h('cf-mitigated') === 'challenge' || /Just a moment|challenge-platform|cf-chl|Attention Required/i.test(body)
+  const blockedBy = cf ? 'Cloudflare (anti-bot / IP server diblok)' : (h('server') || 'origin')
+  const hint = res.status === 403 || res.status === 429
+    ? ' — kemungkinan IP server (Vercel/datacenter) diblok snapyt. Coba ganti region function, atau set env SNAPYT_PROXY.'
+    : ''
+  const err = new Error(`gak bisa buka ${what}: HTTP ${res.status} diblok ${blockedBy}${hint}`)
+  const u = new URL(res.url || BASE)
+  err.diagnostic = {
+    source: 'upstream',
+    url: u.origin + u.pathname,
+    status: res.status,
+    statusText: res.statusText,
+    capturedAt: new Date().toISOString(),
+    headers: Object.fromEntries(['content-type', 'server', 'cf-ray', 'cf-mitigated', 'retry-after', 'x-vercel-id']
+      .flatMap(n => (h(n) ? [[n, h(n)]] : []))),
+    region: process.env.VERCEL_REGION || null,
+    body: body.replace(/\s+/g, ' ').slice(0, 800),
+    truncated: body.length > 800,
+  }
+  return err
+}
+
 const ROUTES_FILE = process.env.SNAPYT_ROUTES_PATH
   || path.join(os.tmpdir(), 'snapyt_routes.json')
 
@@ -156,9 +214,11 @@ export class SnapYT {
   }
 
   async _request(url, { method = 'GET', data = null, headers = {}, timeout } = {}) {
+    const isAjax = method !== 'GET' || 'X-Requested-With' in headers
     const hdr = {
       'User-Agent': UA,
       'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+      ...(isAjax ? { 'Accept': '*/*' } : BROWSER_HEADERS),
       ...headers,
     }
     const cookie = this.jar.header()
@@ -176,6 +236,7 @@ export class SnapYT {
         body,
         redirect: 'follow',
         signal: AbortSignal.timeout(timeout || this.timeout),
+        dispatcher: await dispatcher(),
       })
     } catch (err) {
       throw new Error(`gak bisa nyambung ke ${new URL(url).host} (${err.cause?.code || err.message})`)
@@ -189,16 +250,38 @@ export class SnapYT {
   }
 
   async nonce() {
-    const res = await this._request(`${BASE}/id/`)
-    if (!res.ok) throw new Error(`gak bisa buka snapyt: HTTP ${res.status}`)
-    const page = await this._text(res)
-    const m = page.match(/var videoDownloader\s*=\s*\{[^}]*"nonce":"([0-9a-f]+)"/)
-    dbg('nonce', m ? 'dari halaman' : 'fallback vd_fresh_nonce', m?.[1] || '')
-    return m ? m[1] : this.freshNonce()
+    // Coba beberapa halaman (kadang cuma 1 path yg kena rule Cloudflare),
+    // terus fallback ke AJAX vd_fresh_nonce sebelum nyerah.
+    let firstBad = null
+    for (const p of ['/id/', '/', '/en/']) {
+      const res = await this._request(`${BASE}${p}`)
+      if (!res.ok) {
+        dbg('nonce', p, `HTTP ${res.status}`, res.headers.get('cf-mitigated') || '')
+        if (!firstBad) firstBad = await upstreamError(res, `snapyt${p}`)
+        else await this._text(res)
+        continue
+      }
+      const page = await this._text(res)
+      const m = page.match(/var videoDownloader\s*=\s*\{[^}]*"nonce":"([0-9a-f]+)"/)
+      dbg('nonce', m ? `dari halaman ${p}` : 'gak ketemu di halaman', m?.[1] || '')
+      if (m) return m[1]
+      break
+    }
+    try {
+      return await this.freshNonce()
+    } catch (err) {
+      throw firstBad || err
+    }
   }
 
   async freshNonce() {
-    const res = await this._request(AJAX, { method: 'POST', data: { action: 'vd_fresh_nonce' }, timeout: this.timeout })
+    const res = await this._request(AJAX, {
+      method: 'POST',
+      data: { action: 'vd_fresh_nonce' },
+      headers: { Origin: BASE, Referer: `${BASE}/id/`, 'X-Requested-With': 'XMLHttpRequest' },
+      timeout: this.timeout,
+    })
+    if (!res.ok) throw await upstreamError(res, 'snapyt (vd_fresh_nonce)')
     const j = await res.json().catch(() => null)
     const n = j?.data?.nonce
     if (!n) throw new Error('gak dapet nonce baru dari snapyt')
@@ -227,6 +310,11 @@ export class SnapYT {
     }
     let j
     try { j = JSON.parse(text) } catch {
+      if (status === 403 || status === 429) {
+        const err = new Error(`snapyt nolak request (HTTP ${status}) — kemungkinan IP server diblok Cloudflare. Coba ganti region function, atau set env SNAPYT_PROXY.`)
+        err.diagnostic = { source: 'upstream', url: AJAX, status, region: process.env.VERCEL_REGION || null, body: text.replace(/\s+/g, ' ').slice(0, 800) }
+        throw err
+      }
       throw new Error(`respon aneh dari server: HTTP ${status} ${text.slice(0, 120)}`)
     }
     if (!j.success) {
@@ -236,7 +324,7 @@ export class SnapYT {
     const preview = j.data?.redirect
     if (!preview) throw new Error('server gak ngasih halaman preview')
     const pRes = await this._request(preview, { headers: { Referer: this.referer } })
-    if (!pRes.ok) throw new Error(`gak bisa buka preview: HTTP ${pRes.status}`)
+    if (!pRes.ok) throw await upstreamError(pRes, 'preview')
     this.referer = preview
     const page = await this._text(pRes)
     const info = SnapYT.parsePreview(page, preview)

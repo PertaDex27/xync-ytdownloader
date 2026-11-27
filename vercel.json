@@ -14,5 +14,8 @@
       "maxDuration": 60,
       "includeFiles": "src/**"
     }
-  }
+  },
+  "regions": [
+    "sin1"
+  ]
 }
