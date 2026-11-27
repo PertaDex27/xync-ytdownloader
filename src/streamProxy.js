@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import crypto from 'node:crypto'
+import { upstreamFetch } from './upstream.js'
 
 // ------------------------------------------------------------------- token
 // Token = base64url(JSON konteks) + HMAC biar gak bisa dipalsu (SSRF gate).
@@ -86,7 +87,7 @@ export async function handleStream(req, res) {
 
   let up
   try {
-    up = await fetch(ctx.u, { headers, redirect: 'follow', signal: AbortSignal.timeout(600000) })
+    up = await upstreamFetch(ctx.u, { headers, redirect: 'follow', signal: AbortSignal.timeout(600000) })
   } catch (err) {
     return json(res, 502, { status: 'error', message: `gak bisa nyambung ke sumber file: ${err.message}` })
   }

@@ -93,3 +93,15 @@ Pake buat konten punya lo sendiri, yang udah dapet izin, atau yang lisensinya me
 ## Lisensi
 
 [Apache License 2.0](LICENSE).
+
+## Kena 403 Cloudflare di Vercel? Pakai Cloudflare Worker
+
+Vercel jalan di IP AWS yang sering di-challenge Cloudflare-nya snapyt. Solusinya: request ke snapyt diterusin lewat Worker (`worker/xync-proxy.js`).
+
+1. Cloudflare → Workers & Pages → Create → Worker → paste isi `worker/xync-proxy.js` → Deploy
+2. Worker → Settings → Variables and Secrets → tambah **Secret** `XYNC_KEY` (string acak panjang)
+3. Cek: `https://<worker>.workers.dev/__test?key=<XYNC_KEY>` → harus `"ok": true`
+4. Vercel → Settings → Environment Variables:
+   - `SNAPYT_WORKER` = `https://<worker>.workers.dev`
+   - `SNAPYT_WORKER_KEY` = `<XYNC_KEY yang sama>`
+5. Redeploy

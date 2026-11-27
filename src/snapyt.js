@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { upstreamFetch, usingWorker } from './upstream.js'
 
 export const BASE = process.env.SNAPYT_BASE || 'https://www.snapyt.app'
 export const AJAX = `${BASE}/wp-admin/admin-ajax.php`
@@ -50,7 +51,9 @@ async function upstreamError(res, what) {
   const cf = h('cf-mitigated') === 'challenge' || /Just a moment|challenge-platform|cf-chl|Attention Required/i.test(body)
   const blockedBy = cf ? 'Cloudflare (anti-bot / IP server diblok)' : (h('server') || 'origin')
   const hint = res.status === 403 || res.status === 429
-    ? ' — kemungkinan IP server (Vercel/datacenter) diblok snapyt. Coba ganti region function, atau set env SNAPYT_PROXY.'
+    ? (usingWorker()
+      ? ' — snapyt juga nolak IP worker Cloudflare. Worker gak tembus, perlu proxy residential (SNAPYT_PROXY) / host sendiri.'
+      : ' — kemungkinan IP server (Vercel/datacenter) diblok snapyt. Set env SNAPYT_WORKER (Cloudflare Worker) atau SNAPYT_PROXY.')
     : ''
   const err = new Error(`gak bisa buka ${what}: HTTP ${res.status} diblok ${blockedBy}${hint}`)
   const u = new URL(res.url || BASE)
@@ -63,6 +66,7 @@ async function upstreamError(res, what) {
     headers: Object.fromEntries(['content-type', 'server', 'cf-ray', 'cf-mitigated', 'retry-after', 'x-vercel-id']
       .flatMap(n => (h(n) ? [[n, h(n)]] : []))),
     region: process.env.VERCEL_REGION || null,
+    via: usingWorker() ? 'cloudflare-worker' : 'direct',
     body: body.replace(/\s+/g, ' ').slice(0, 800),
     truncated: body.length > 800,
   }
@@ -230,16 +234,18 @@ export class SnapYT {
     }
     let res
     try {
-      res = await fetch(url, {
+      res = await upstreamFetch(url, {
         method,
         headers: hdr,
         body,
         redirect: 'follow',
         signal: AbortSignal.timeout(timeout || this.timeout),
-        dispatcher: await dispatcher(),
+        dispatcher: usingWorker() ? undefined : await dispatcher(),
       })
     } catch (err) {
-      throw new Error(`gak bisa nyambung ke ${new URL(url).host} (${err.cause?.code || err.message})`)
+      if (/^(worker cloudflare|SNAPYT_WORKER)/.test(err.message)) throw err
+      const via = usingWorker() ? ' lewat worker' : ''
+      throw new Error(`gak bisa nyambung ke ${new URL(url).host}${via} (${err.cause?.code || err.message})`)
     }
     this.jar.store(res)
     return res

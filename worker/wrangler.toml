@@ -1,0 +1,9 @@
+name = "xync-proxy"
+main = "xync-proxy.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Secret jangan ditulis di sini. Set pake:
+#   npx wrangler secret put XYNC_KEY
+[vars]
+ALLOWED_HOSTS = "snapyt.app"
