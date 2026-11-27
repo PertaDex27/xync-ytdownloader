@@ -1,26 +1,12 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { solveCap } from './cap.js'
-import { captureResponse } from './diagnostics.js'
+// Engine web: dulu ke embed.dlsrv.online (captcha + PoW), sekarang ke snapyt.app.
+// Port JS dari api.py (SnapYT client) — nonce, process_video_url, race jalur,
+// server merge. Kontrak API lama tetap: format mp3/mp4/m4a/opus + kualitas.
+import { SnapYT, pickOption, bestAudio, outName, safeName } from './snapyt.js'
+import { makeStreamUrl, ffmpegAvailable } from './streamProxy.js'
 
-const BASE = 'https://embed.dlsrv.online'
-const SOLVER = 'https://check.dlsrv.online/30bb427100/'
-const CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json')
+const IS_VERCEL = !!process.env.VERCEL
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36'
-
-const BASE_HEADERS = {
-  'User-Agent': UA,
-  'sec-ch-ua': '"Not:A-Brand";v="8", "Chromium";v="156"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"',
-  'accept-language': 'en-US',
-  Origin: BASE,
-  Referer: `${BASE}/v3/full`,
-}
-
-const FORMATS = {
+export const FORMATS = {
   mp4: ['2160', '1440', '1080', '720', '480', '360', '240', '144'],
   mp3: ['320', '256', '128', '96', '64'],
   m4a: ['320'],
@@ -29,35 +15,15 @@ const FORMATS = {
 
 const DEFAULT_QUALITY = { mp4: '1080', mp3: '320', m4a: '320', opus: '320' }
 
-let session = { token: null, exp: 0 }
-let renewing = null
-
-function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) } catch { return {} }
+export function normalizeFormat(format) {
+  const f = String(format || '').toLowerCase()
+  return FORMATS[f] ? f : 'mp3'
 }
 
-export function getCapsolverUrl() {
-  return process.env.CAPSOLVER_URL || loadConfig().capsolver || ''
-}
-
-export function setCapsolverUrl(url) {
-  const cfg = loadConfig()
-  if (url) cfg.capsolver = url
-  else delete cfg.capsolver
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
-}
-
-async function getCapToken(onStatus) {
-  const remote = getCapsolverUrl()
-  if (remote) {
-    onStatus('Solve captcha via CapSolver...')
-    try {
-      const res = await fetch(remote.replace(/\/+$/, ''))
-      const data = await res.json()
-      if (data?.capToken) return data.capToken
-    } catch {}
-  }
-  return solveCap(SOLVER, onStatus)
+export function normalizeQuality(format, quality) {
+  const list = FORMATS[format]
+  const q = String(quality || DEFAULT_QUALITY[format])
+  return list.includes(q) ? q : DEFAULT_QUALITY[format]
 }
 
 export function extractVideoId(input) {
@@ -87,132 +53,88 @@ export async function fetchMeta(videoId) {
   }
 }
 
-function authHeaders(token, extra = {}) {
-  return { ...BASE_HEADERS, ...extra, Authorization: `Bearer ${token}` }
+/** Info mentah snapyt (judul, channel, durasi, semua opsi format). */
+export async function getSnapytInfo(videoId, onStatus = () => {}) {
+  const cli = new SnapYT({ ajaxTimeout: IS_VERCEL ? 45000 : 90000 })
+  onStatus('Ngambil info video dari snapyt...')
+  return cli.fetchInfo(`https://www.youtube.com/watch?v=${videoId}`)
 }
 
-function decodeJwtExp(token) {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
-    return payload.exp ? payload.exp * 1000 : Date.now() + 60000
-  } catch {
-    return 0
+/**
+ * Selesaikan satu permintaan download -> konteks stream snapyt yang sudah
+ * kebukti jalan (dibalap dulu jalurnya), dibungkus token buat /api/stream.
+ */
+export async function resolve(videoId, format, quality, onStatus = () => {}) {
+  const cli = new SnapYT({ ajaxTimeout: IS_VERCEL ? 45000 : 90000 })
+  onStatus('Ngambil info video dari snapyt...')
+  const info = await cli.fetchInfo(`https://www.youtube.com/watch?v=${videoId}`)
+
+  let fmt = format
+  let pick = pickOption(info, fmt, quality)
+  let opt = pick.option || pick
+  const mode = pick.mode || 'single'
+  if (pick.degraded) {
+    onStatus(`Resolusi ${quality}p gak tersedia → pakai ${opt.res ? `${opt.res}p` : opt.label}`)
   }
-}
 
-async function fetchJson(url, opts = {}) {
-  const res = await fetch(url, opts)
-  let body = null
-  try { body = await res.json() } catch {}
-  return { status: res.status, body }
-}
-
-async function createSession(onStatus) {
-  const capToken = await getCapToken(onStatus)
-  onStatus('Verifikasi session...')
-  const verifyUrl = `${BASE}/api/verify`
-  const res = await fetch(verifyUrl, {
-    method: 'POST',
-    headers: { ...BASE_HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ capToken }),
-  })
-  const { body, diagnostic } = await captureResponse(res, verifyUrl, [capToken])
-  if (!res.ok || !body?.token) {
-    const err = new Error(res.status === 403 ? 'verify rejected (403 Forbidden)' : `verify failed: HTTP ${res.status}`)
-    err.diagnostic = diagnostic
-    throw err
+  let ffBr = null
+  if (fmt === 'mp3') {
+    const br = Number(opt.mp3) || Number(quality) || 320
+    if (!IS_VERCEL && ffmpegAvailable()) {
+      // Sumber mp3 di snapyt tetap opus/webm — encode MP3-nya di lokal (kayak api.py).
+      onStatus(`Nyiapin sumber audio buat encode MP3 ${br}k...`)
+      ffBr = br
+    } else {
+      // Gak ada ffmpeg (mis. di Vercel) → fallback M4A biar tetap bisa diputar.
+      const alt = bestAudio(info, 'mp4') || opt
+      opt = alt
+      fmt = 'm4a'
+      onStatus(`MP3 perlu ffmpeg (gak ada di sini) → dikasih M4A ${quality}k`)
+    }
   }
-  return { token: body.token, exp: decodeJwtExp(body.token) }
-}
 
-async function ensureSession(onStatus = () => {}) {
-  if (session.token && Date.now() < session.exp - 30000) return session.token
-  if (!renewing) {
-    renewing = createSession(onStatus)
-      .then(s => { session = s; return s.token })
-      .finally(() => { renewing = null })
-  }
-  return renewing
-}
-
-async function resetSession() {
-  session = { token: null, exp: 0 }
-}
-
-async function touchSession(token, videoId) {
-  await fetchJson(`${BASE}/api/session/touch`, {
-    method: 'POST',
-    headers: authHeaders(token, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ videoId }),
-  })
-}
-
-async function startJob(token, videoId, format, quality) {
-  const { status, body } = await fetchJson(`${BASE}/api/v3/download`, {
-    method: 'POST',
-    headers: authHeaders(token, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ videoId, format, quality }),
-  })
-  return { status, body }
-}
-
-async function pollJob(token, job, timeoutMs, onStatus) {
-  const deadline = Date.now() + timeoutMs
-  onStatus('Nunggu hasil konversi...')
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000))
-    const { status, body } = await fetchJson(`${BASE}/api/v3/progress?${new URLSearchParams({ job })}`, {
-      headers: authHeaders(token),
-      cache: 'no-store',
+  let stream
+  if (mode === 'mux') {
+    onStatus(`Server merge: ${opt.label} + ${pick.audio.label}...`)
+    stream = await cli.serverMerge(info, opt, pick.audio, {
+      onStatus,
+      deadlineMs: IS_VERCEL ? 45000 : 240000,
     })
-    if (status === 429) continue
-    if (status === 401 || status === 403) throw new Error(`progress rejected: ${status}`)
-    if (!body) continue
-    if (typeof body.progress === 'number') onStatus(`Konversi... ${body.progress}%`, body.progress / 100)
-    if (body.done) {
-      if (body.url) return body.url
-      throw new Error(body.error || 'conversion failed')
-    }
-    if (body.error) throw new Error(body.error)
+  } else {
+    onStatus(`Nyari jalur tercepat buat ${opt.label}...`)
+    stream = await cli.openStream(info, opt, {
+      onRetry: (_sent, _host, _route, why) => onStatus(`Nyari jalur download · ${why}`),
+    })
   }
-  throw new Error('conversion timed out')
+
+  const ext = fmt === 'mp3' ? 'mp3' : mode === 'mux' ? 'mp4' : (opt.ext === 'opus' ? 'webm' : opt.ext)
+  const filename = ffBr
+    ? `${safeName(info.title)} [MP3-${ffBr}k].mp3`
+    : outName(info, opt, opt.isAudio ? opt : (pick.audio || null), ext)
+
+  const ctx = { u: stream.url, r: stream.referer, k: stream.cookie, f: filename, s: ffBr ? 0 : (opt.bytes || 0) }
+  if (ffBr) ctx.ff = { br: ffBr }
+
+  return {
+    url: makeStreamUrl(ctx),
+    title: info.title,
+    channel: info.channel,
+    duration: info.duration,
+    secs: info.secs,
+    thumbnail: info.thumbs[0] || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    format: fmt,
+    quality: fmt === 'mp4' ? String(opt.res || quality)
+      : fmt === 'mp3' ? String(ffBr || opt.mp3 || quality)
+      : quality,
+    label: opt.label,
+    size: opt.bytes || 0,
+    via: stream.via || '',
+  }
 }
 
+/** Kompatibel kontrak lama: balikin URL final siap diunduh. */
 export async function convert(videoId, format, quality, onStatus = () => {}) {
-  let token = await ensureSession(onStatus)
-  let renewed = false
-  for (;;) {
-    onStatus('Request konversi...')
-    await touchSession(token, videoId)
-    const { status, body } = await startJob(token, videoId, format, quality)
-    if (status === 401 || status === 403) {
-      if (renewed) throw new Error(`download rejected: ${status}`)
-      renewed = true
-      await resetSession()
-      token = await ensureSession(onStatus)
-      continue
-    }
-    if (body?.job) return pollJob(token, body.job, 300000, onStatus)
-    if (body?.error === 'Session not ready. Please try again.') {
-      if (renewed) throw new Error(body.error)
-      renewed = true
-      onStatus('Session belum siap, coba lagi...')
-      await new Promise(r => setTimeout(r, 2000))
-      continue
-    }
-    throw new Error(body?.error || `download failed: ${status}`)
-  }
+  const r = await resolve(videoId, format, quality, onStatus)
+  const base = process.env.SNAPYT_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`
+  return r.url.startsWith('http') ? r.url : base + r.url
 }
-
-export function normalizeFormat(format) {
-  const f = String(format || '').toLowerCase()
-  return FORMATS[f] ? f : 'mp3'
-}
-
-export function normalizeQuality(format, quality) {
-  const list = FORMATS[format]
-  const q = String(quality || DEFAULT_QUALITY[format])
-  return list.includes(q) ? q : DEFAULT_QUALITY[format]
-}
-
-export { FORMATS }

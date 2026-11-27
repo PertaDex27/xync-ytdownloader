@@ -6,11 +6,11 @@
     }
   ],
   "functions": {
-    "api/solve.js": {
+    "api/download.js": {
       "maxDuration": 60,
       "includeFiles": "src/**"
     },
-    "api/download.js": {
+    "api/stream.js": {
       "maxDuration": 60,
       "includeFiles": "src/**"
     }

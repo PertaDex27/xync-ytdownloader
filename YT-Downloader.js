@@ -2,7 +2,7 @@ import readline from 'node:readline'
 import fs from 'node:fs'
 import path from 'node:path'
 import { startServer, stopServer, serverPort } from './src/server.js'
-import { convert, normalizeFormat, normalizeQuality, getCapsolverUrl, setCapsolverUrl, extractVideoId, fetchMeta, FORMATS } from './src/engine.js'
+import { convert, normalizeFormat, normalizeQuality, extractVideoId, fetchMeta, FORMATS } from './src/engine.js'
 
 const E = '\x1b['
 const reset = `${E}0m`
@@ -32,8 +32,7 @@ const MENU = [
   { key: '2', label: 'Stop API Server', icon: '■' },
   { key: '3', label: 'Cek Info Video', icon: 'ℹ' },
   { key: '4', label: 'Download / Convert', icon: '⬇' },
-  { key: '5', label: 'Set CapSolver URL', icon: '⚙' },
-  { key: '6', label: 'Keluar', icon: '✕' },
+  { key: '5', label: 'Keluar', icon: '✕' },
 ]
 
 let selected = 0
@@ -69,11 +68,7 @@ function render() {
   const status = serverOn
     ? `${green}${bold} ● API ONLINE  ${reset}${gray}http://localhost:${serverPort()}${reset}`
     : `${red}${bold} ● API OFFLINE ${reset}${gray}ketuk Start API Server${reset}`
-  const solver = getCapsolverUrl()
-    ? `${cyan}${bold} ● SOLVER REMOTE${reset}`
-    : `${yellow}${bold} ● SOLVER LOCAL ${reset}`
   console.log(`  STATUS   ${status}`)
-  console.log(`  SOLVER   ${solver}`)
   console.log()
   MENU.forEach((item, i) => {
     const active = i === selected
@@ -85,7 +80,7 @@ function render() {
     console.log(`   ${icon} ${num} ${label}`)
   })
   console.log()
-  console.log(`   ${gray}↑↓ geser  •  ENTER pilih  •  1-6 shortcut  •  Ctrl+C keluar${reset}`)
+  console.log(`   ${gray}↑↓ geser  •  ENTER pilih  •  1-5 shortcut  •  Ctrl+C keluar${reset}`)
   console.log()
 }
 
@@ -224,6 +219,17 @@ async function doInfo() {
 }
 
 async function doDownload() {
+  // Link final dikeluarin lewat /api/stream (proxy snapyt) → server harus jalan.
+  if (!serverOn) {
+    const spinSrv = spinnerStart('Nyalain API server buat proxy download...')
+    try {
+      await startServer()
+      serverOn = true
+      spinSrv.stop()
+    } catch {
+      spinSrv.stop()
+    }
+  }
   const input = await ask('Masukin link YouTube:')
   const videoId = extractVideoId(input)
   if (!videoId) {
@@ -239,7 +245,7 @@ async function doDownload() {
   const picked = list[Number(qIn) - 1] || list.find(q => q === qIn) || null
   const quality = normalizeQuality(format, picked)
 
-  const spin = spinnerStart('Nyiapin sesi & captcha...')
+  const spin = spinnerStart('Nyiapin link download via snapyt...')
   const t0 = Date.now()
   let result
   try {
@@ -300,25 +306,6 @@ async function doStopServer() {
   await waitEnter()
 }
 
-async function doSetSolver() {
-  const cur = getCapsolverUrl()
-  console.log(cur
-    ? `   ${gray}CapSolver sekarang:${reset} ${cyan}${cur}${reset}`
-    : `   ${gray}CapSolver sekarang:${reset} ${yellow}LOCAL (solve di device ini)${reset}`)
-  console.log(`   ${gray}Isi URL CapSolver buat mindahin beban solve ke server.${reset}`)
-  const url = await ask('URL CapSolver (kosongkan buat LOCAL):')
-  const clean = url.replace(/\/+$/, '')
-  if (clean && !/^https?:\/\//.test(clean)) {
-    console.log(`   ${red}${bold}✘ Gagal:${reset} ${red}URL harus http(s)://...${reset}`)
-    return waitEnter()
-  }
-  setCapsolverUrl(clean)
-  console.log(clean
-    ? `   ${green}${bold}✔ CapSolver remote aktif${reset}`
-    : `   ${yellow}${bold}■ Balik ke mode LOCAL${reset}`)
-  await waitEnter()
-}
-
 async function runSelected() {
   busy = true
   try {
@@ -326,7 +313,6 @@ async function runSelected() {
     else if (selected === 1) await doStopServer()
     else if (selected === 2) await doInfo()
     else if (selected === 3) await doDownload()
-    else if (selected === 4) await doSetSolver()
     else {
       await stopServer()
       console.log(`\n   ${cyan}${bold}Dadah!${reset} ${gray}~ XyncTeam${reset}\n`)
@@ -352,7 +338,7 @@ process.stdin.on('keypress', (str, key = {}) => {
   if (key.name === 'up') { selected = (selected + MENU.length - 1) % MENU.length; render() }
   else if (key.name === 'down') { selected = (selected + 1) % MENU.length; render() }
   else if (key.name === 'return' || key.name === 'enter') runSelected()
-  else if (/^[1-6]$/.test(str)) { selected = Number(str) - 1; render() }
+  else if (/^[1-5]$/.test(str)) { selected = Number(str) - 1; render() }
 })
 
 render()

@@ -3,7 +3,8 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { convert, normalizeFormat, normalizeQuality, extractVideoId, fetchMeta } from './engine.js'
+import { handleStream } from './streamProxy.js'
+import { resolve as resolveDownload, normalizeFormat, normalizeQuality, extractVideoId, fetchMeta } from './engine.js'
 
 const PORT = process.env.PORT || 3000
 
@@ -14,6 +15,12 @@ function send(res, status, data) {
     'Cache-Control': 'no-store',
   })
   res.end(JSON.stringify(data))
+}
+
+function absolute(req, rel) {
+  if (rel.startsWith('http')) return rel
+  const host = req.headers.host || `localhost:${PORT}`
+  return `http://${host}${rel}`
 }
 
 async function handle(req, res) {
@@ -27,6 +34,10 @@ async function handle(req, res) {
       const html = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'index.html'))
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       return res.end(html)
+    }
+
+    if (url.pathname === '/api/stream') {
+      return await handleStream(req, res)
     }
 
     if (url.pathname !== '/api/info' && url.pathname !== '/api/download') {
@@ -54,18 +65,26 @@ async function handle(req, res) {
         })
         const push = data => res.write(`data: ${JSON.stringify(data)}\n\n`)
         try {
-          const meta = await fetchMeta(videoId)
-          const fileUrl = await convert(videoId, format, quality, (msg, frac) => push({ type: 'status', msg, frac }))
-          push({ type: 'done', status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
+          const r = await resolveDownload(videoId, format, quality, (msg, frac) => push({ type: 'status', msg, frac }))
+          push({
+            type: 'done', status: 'ok', videoId,
+            title: r.title, author: r.channel, thumbnail: r.thumbnail,
+            format: r.format, quality: r.quality, size: r.size, label: r.label,
+            url: absolute(req, r.url),
+          })
         } catch (err) {
           push({ type: 'error', ...errorPayload(err) })
         }
         return res.end()
       }
 
-      const meta = await fetchMeta(videoId)
-      const fileUrl = await convert(videoId, format, quality)
-      return send(res, 200, { status: 'ok', videoId, title: meta.title, author: meta.author, format, quality, url: fileUrl })
+      const r = await resolveDownload(videoId, format, quality)
+      return send(res, 200, {
+        status: 'ok', videoId,
+        title: r.title, author: r.channel, thumbnail: r.thumbnail,
+        format: r.format, quality: r.quality, size: r.size, label: r.label,
+        url: absolute(req, r.url),
+      })
     }
   } catch (err) {
     return send(res, 500, { status: 'error', ...errorPayload(err) })
