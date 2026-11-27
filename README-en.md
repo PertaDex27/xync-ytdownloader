@@ -11,7 +11,7 @@ Want to see what it looks like? Open the website directly. No screenshots here t
 ## Features
 
 - Audio: **MP3, M4A, OPUS**.
-- Video: **MP4**, with requested resolutions up to **2160p / 4K**.
+- Video: **MP4**, with the resolutions the source offers (usually up to **1080p**, powered by snapyt).
 - Preview the title, channel, and thumbnail before converting.
 - Follow processing status in the browser.
 - Light and dark themes, with a mobile-friendly layout.

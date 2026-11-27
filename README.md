@@ -11,7 +11,7 @@ Penasaran tampilannya? Langsung buka webnya aja, sekalian cobain. Nggak pake scr
 ## Bisa buat apa aja?
 
 - Unduh audio: **MP3, M4A, dan OPUS**.
-- Unduh video: **MP4**, dengan pilihan resolusi sampai **2160p / 4K**.
+- Unduh video: **MP4**, resolusi ngikutin yang tersedia (umumnya sampai **1080p**, via snapyt).
 - Cek judul, nama channel, dan thumbnail sebelum lanjut.
 - Liat status proses selama nyiapin link unduhan.
 - Ganti tema gelap atau terang. Di HP juga bisa.
