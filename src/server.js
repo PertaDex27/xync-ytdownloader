@@ -19,8 +19,10 @@ function send(res, status, data) {
 
 function absolute(req, rel) {
   if (rel.startsWith('http')) return rel
-  const host = req.headers.host || `localhost:${PORT}`
-  return `http://${host}${rel}`
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`
+  // di belakang tunnel (cloudflared/ngrok) halaman dibuka via https — jangan balikin link http
+  const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()
+  return `${proto}://${host}${rel}`
 }
 
 async function handle(req, res) {
